@@ -1,0 +1,6 @@
+{
+  "name": "REAL FUMA",
+  "description": "Coastal-to-mountain 3D PBR open-world racing simulator featuring a seamless spline highway loop, responsive Forza-style drift and grip physics, dynamic weather, and a 3D customization garage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
