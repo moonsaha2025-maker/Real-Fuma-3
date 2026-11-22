@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
@@ -97,9 +96,8 @@ const _lightRight = new THREE.Vector3();
 const _lightUp = new THREE.Vector3();
 const _focusPt = new THREE.Vector3();
 
-const SHADOW_HALF_EXTENT = 38;
-const SHADOW_MAP_RES = 2048;
-const SHADOW_TEXEL_SIZE = (SHADOW_HALF_EXTENT * 2) / SHADOW_MAP_RES;
+const SHADOW_HALF_EXTENT = 26;
+const DEFAULT_SHADOW_MAP_RES = 2048;
 
 function timePresetToPhase(time: TimeOfDay): number {
   if (time === 'sunrise') return 0.265;
@@ -114,6 +112,58 @@ function formatCycleClock(phase: number): string {
   const hh = Math.floor(totalMins / 60) % 24;
   const mm = totalMins % 60;
   return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
+}
+
+function buildCoastalSkyEnvironmentTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  // Equirectangular sunlit coastal sky (top half) -> bright horizon clouds -> turquoise sea & dark asphalt ground (bottom half)
+  const vGrad = ctx.createLinearGradient(0, 0, 0, 256);
+  vGrad.addColorStop(0.0, '#0752cc');
+  vGrad.addColorStop(0.24, '#29a8ff');
+  vGrad.addColorStop(0.45, '#b8ebff');
+  vGrad.addColorStop(0.50, '#ffffff');
+  vGrad.addColorStop(0.54, '#22d3ee');
+  vGrad.addColorStop(0.68, '#0b5c8a');
+  vGrad.addColorStop(0.84, '#1e293b');
+  vGrad.addColorStop(1.0, '#0f172a');
+  ctx.fillStyle = vGrad;
+  ctx.fillRect(0, 0, 512, 256);
+
+  // Soft sunlit cumulus horizon cloud band for natural car-hood sky reflections
+  for (let i = 0; i < 16; i++) {
+    const cx = ((i * 37) % 512);
+    const cy = 104 + (i % 3) * 8;
+    const rad = 28 + (i % 4) * 14;
+    const cg = ctx.createRadialGradient(cx, cy, 4, cx, cy, rad);
+    cg.addColorStop(0, 'rgba(255,255,255,0.75)');
+    cg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Crisp radiant solar disc + warm Mie halo for glossy clearcoat hood speculars
+  const sunX = 160;
+  const sunY = 66;
+  const sg = ctx.createRadialGradient(sunX, sunY, 3, sunX, sunY, 54);
+  sg.addColorStop(0.0, 'rgba(255, 255, 245, 1.0)');
+  sg.addColorStop(0.18, 'rgba(255, 244, 200, 0.85)');
+  sg.addColorStop(0.55, 'rgba(255, 224, 150, 0.25)');
+  sg.addColorStop(1.0, 'rgba(255, 220, 150, 0)');
+  ctx.fillStyle = sg;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 54, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function detectSoftwareWebGL(): boolean {
@@ -156,6 +206,7 @@ export class GameEngine {
   // Lighting
   private sunLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
+  private shadowTexelSize = (SHADOW_HALF_EXTENT * 2) / DEFAULT_SHADOW_MAP_RES;
   private headlightSpot: THREE.SpotLight | null = null;
   private exhaustLight: THREE.PointLight | null = null;
   private softboxA: THREE.RectAreaLight | null = null;
@@ -287,41 +338,51 @@ export class GameEngine {
       2400,
     );
 
-    // Forza-style crisp RoomEnvironment IBL with soft blur to eliminate chrome/roof blowouts
+    // Sunlit coastal sky-and-ocean PMREM IBL for authentic car paint, hood, and windshield reflections
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.08).texture;
+    pmrem.compileEquirectangularShader();
+    const coastalEnvTex = buildCoastalSkyEnvironmentTexture();
+    this.scene.environment = pmrem.fromEquirectangular(coastalEnvTex).texture;
+    coastalEnvTex.dispose();
     pmrem.dispose();
 
     // Crisp coastal daylight rig + car-following texel-snapped 2048x2048 shadow frustum
     this.hemiLight = new THREE.HemisphereLight(0xc2ebff, 0x334155, 0.74);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfffbeb, 1.65);
+    this.sunLight = new THREE.DirectionalLight(0xfffbeb, 2.05);
     this.sunLight.position.set(this.showcasePt.x - 95, 115, this.showcasePt.z - 80);
     this.sunLight.castShadow = !this.isSoftwareGl;
-    this.sunLight.shadow.mapSize.set(SHADOW_MAP_RES, SHADOW_MAP_RES);
-    this.sunLight.shadow.camera.near = 5;
-    this.sunLight.shadow.camera.far = 260;
+    this.sunLight.shadow.mapSize.set(DEFAULT_SHADOW_MAP_RES, DEFAULT_SHADOW_MAP_RES);
+    this.sunLight.shadow.camera.near = 2;
+    this.sunLight.shadow.camera.far = 240;
     this.sunLight.shadow.camera.left = -SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.right = SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.top = SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.bottom = -SHADOW_HALF_EXTENT;
-    this.sunLight.shadow.bias = -0.0003;
-    this.sunLight.shadow.normalBias = 0.016;
-    this.sunLight.shadow.radius = 2.2;
+    this.sunLight.shadow.bias = -0.00018;
+    this.sunLight.shadow.normalBias = 0.012;
+    this.sunLight.shadow.radius = 1.35;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
+    // Dynamic Car Headlight Beam Spotlight (non-shadow-casting; illuminates pitch-dark night roads)
+    this.headlightSpot = new THREE.SpotLight(
+      0xf3f7ff,
+      0,
+      175,
+      Math.PI / 3.25,
+      0.56,
+      1.18,
+    );
+    this.headlightSpot.castShadow = false;
+    this.scene.add(this.headlightSpot);
+    this.scene.add(this.headlightSpot.target);
+
+    this.exhaustLight = new THREE.PointLight(0x38bdf8, 0, 14, 2);
+    this.scene.add(this.exhaustLight);
+
     if (!this.isSoftwareGl) {
-      // Dynamic Car Headlight Beam Spotlight (non-shadow-casting for zero overhead)
-      this.headlightSpot = new THREE.SpotLight(0xeef6ff, 0, 90, Math.PI / 4.2, 0.65, 1.35);
-      this.headlightSpot.castShadow = false;
-      this.scene.add(this.headlightSpot);
-      this.scene.add(this.headlightSpot.target);
-
-      this.exhaustLight = new THREE.PointLight(0x38bdf8, 0, 14, 2);
-      this.scene.add(this.exhaustLight);
-
       RectAreaLightUniformsLib.init();
       this.softboxA = new THREE.RectAreaLight(0xffffff, 1.5, 9, 4);
       this.softboxA.position.set(this.showcasePt.x - 5, this.showcasePt.y + 6.5, this.showcasePt.z + 7);
@@ -486,6 +547,7 @@ export class GameEngine {
 
     let dpr = 1;
     let shadowEnabled = !this.isSoftwareGl;
+    let shadowRes = DEFAULT_SHADOW_MAP_RES;
     let farPlane = 1750;
     if (!this.isSoftwareGl) {
       const baseDpr = window.devicePixelRatio || 1;
@@ -495,17 +557,29 @@ export class GameEngine {
         farPlane = 1050;
       } else if (settings.graphicsPreset === 'MEDIUM') {
         dpr = Math.min(baseDpr, 1.25);
+        shadowRes = 2048;
         farPlane = 1450;
       } else if (settings.graphicsPreset === 'HIGH') {
         dpr = Math.min(baseDpr, 1.65);
+        shadowRes = 3072;
         farPlane = 1900;
       } else {
         dpr = Math.min(baseDpr, 2.0);
+        shadowRes = 4096;
         farPlane = 2400;
       }
     }
     this.renderer.setPixelRatio(dpr);
     this.renderer.shadowMap.enabled = shadowEnabled;
+    if (
+      shadowEnabled &&
+      this.sunLight.shadow.mapSize.width !== shadowRes
+    ) {
+      this.sunLight.shadow.mapSize.set(shadowRes, shadowRes);
+      this.sunLight.shadow.map?.dispose();
+      this.sunLight.shadow.map = null;
+    }
+    this.shadowTexelSize = (SHADOW_HALF_EXTENT * 2) / shadowRes;
     this.camera.far = farPlane;
     this.camera.updateProjectionMatrix();
 
@@ -563,14 +637,14 @@ export class GameEngine {
     const atm = this.atmosphere.state;
     this.timeOfDay = atm.derivedTimeOfDay;
 
-    let fogDensity = 0.00046;
+    let fogDensity = 0.00044;
     if (this.weather === 'fog') fogDensity = 0.0036;
-    else if (this.weather === 'heavy_rain' || this.weather === 'thunderstorm') fogDensity = 0.0018;
-    else if (this.weather === 'rain') fogDensity = 0.0011;
+    else if (this.weather === 'heavy_rain' || this.weather === 'thunderstorm') fogDensity = 0.0019;
+    else if (this.weather === 'rain') fogDensity = 0.0012;
     else {
-      // Slight atmospheric twilight mist near sunset/dawn
+      // Slight atmospheric twilight mist near sunset/dawn + thick pitch-dark night horizon attenuation
       const goldenMist = Math.max(0, 1 - Math.abs(atm.sunElevation) * 4.2) * 0.00018;
-      fogDensity += goldenMist + atm.nightFactor * 0.00014;
+      fogDensity += goldenMist + atm.nightFactor * 0.00145;
     }
 
     if (this.scene.fog instanceof THREE.FogExp2) {
@@ -1000,8 +1074,9 @@ export class GameEngine {
     }
     _lightUp.crossVectors(_lightDir, _lightRight).normalize();
 
-    const projR = Math.round(_focusPt.dot(_lightRight) / SHADOW_TEXEL_SIZE) * SHADOW_TEXEL_SIZE;
-    const projU = Math.round(_focusPt.dot(_lightUp) / SHADOW_TEXEL_SIZE) * SHADOW_TEXEL_SIZE;
+    const texel = this.shadowTexelSize;
+    const projR = Math.round(_focusPt.dot(_lightRight) / texel) * texel;
+    const projU = Math.round(_focusPt.dot(_lightUp) / texel) * texel;
     const projD = _focusPt.dot(_lightDir);
 
     this.sunLight.target.position
@@ -1013,7 +1088,7 @@ export class GameEngine {
 
     this.sunLight.position
       .copy(this.sunLight.target.position)
-      .addScaledVector(_lightDir, 130);
+      .addScaledVector(_lightDir, 125);
   }
 
   private stepSimulation(dt: number): void {
@@ -1050,6 +1125,9 @@ export class GameEngine {
     if (this.mode === 'showcase') {
       if (this.headlightSpot) this.headlightSpot.intensity = 0;
       if (this.exhaustLight) this.exhaustLight.intensity = 0;
+      if (this.playerCarRig) {
+        this.playerCarRig.setLights(atm.nightFactor > 0.3, false, false);
+      }
       if (this.autoOrbit) {
         this.orbitYaw += dt * 0.22;
       }
@@ -1123,6 +1201,7 @@ export class GameEngine {
     this.raceTopSpeedKmh = Math.max(this.raceTopSpeedKmh, this.physics.speedKmh);
 
     const autoHL =
+      atm.nightFactor > 0.22 ||
       this.timeOfDay === 'night' ||
       this.timeOfDay === 'sunset' ||
       this.weather === 'fog' ||
@@ -1188,21 +1267,21 @@ export class GameEngine {
       this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.045);
     }
 
-    // Real dynamic car headlight pool illuminating highway & foliage at dusk/night
+    // Real dynamic car headlight pool illuminating highway & jungle corridor through pitch-dark night
     if (this.headlightSpot) {
       if (hlOn) {
         this.headlightSpot.position.set(
-          this.physics.x + sinH * 2.0,
-          this.physics.y + 0.78,
-          this.physics.z + cosH * 2.0,
+          this.physics.x + sinH * 2.1,
+          this.physics.y + 0.85,
+          this.physics.z + cosH * 2.1,
         );
         this.headlightSpot.target.position.set(
-          this.physics.x + sinH * 28,
-          this.physics.y - 0.85,
-          this.physics.z + cosH * 28,
+          this.physics.x + sinH * 42,
+          this.physics.y - 0.65,
+          this.physics.z + cosH * 42,
         );
         this.headlightSpot.target.updateMatrixWorld();
-        this.headlightSpot.intensity = 18 + atm.nightFactor * 42;
+        this.headlightSpot.intensity = 24 + atm.nightFactor * 175;
       } else {
         this.headlightSpot.intensity = 0;
       }
@@ -1405,11 +1484,11 @@ export class GameEngine {
 
     if (this.speedBlurPass) {
       const speedNorm = THREE.MathUtils.clamp(
-        (this.physics.speedKmh - 95) / 230,
+        (this.physics.speedKmh - 75) / 220,
         0,
         1,
       );
-      const targetBlur = speedNorm * 0.19 + (this.physics.nitroActive ? 0.18 : 0);
+      const targetBlur = speedNorm * 0.26 + (this.physics.nitroActive ? 0.22 : 0);
       const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
       this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
         curBlur,

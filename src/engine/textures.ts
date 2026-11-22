@@ -16,6 +16,10 @@ export interface ProceduralTexturePack {
   barkNormalMap: THREE.DataTexture;
   palmFrondMap: THREE.CanvasTexture;
   pineBoughMap: THREE.CanvasTexture;
+  jungleLeafMap: THREE.CanvasTexture;
+  cypressFoliageMap: THREE.CanvasTexture;
+  blossomLeafMap: THREE.CanvasTexture;
+  fernFrondMap: THREE.CanvasTexture;
   grassTuftMap: THREE.CanvasTexture;
   cloudMap: THREE.CanvasTexture;
   dispose: () => void;
@@ -162,31 +166,37 @@ export function createProceduralTextures(
     actx.stroke();
   }
 
-  // Crisp white outer shoulder lines with realistic micro-wear
-  actx.fillStyle = '#e5e7eb';
-  actx.fillRect(46, 0, 15, 1024);
-  actx.fillRect(963, 0, 15, 1024);
+  // Crisp white outer shoulder edge lines
+  actx.fillStyle = '#f8fafc';
+  actx.fillRect(42, 0, 16, 1024);
+  actx.fillRect(966, 0, 16, 1024);
 
-  // Clean double amber-yellow center highway stripes
-  actx.fillStyle = '#f59e0b';
-  actx.fillRect(493, 0, 13, 1024);
-  actx.fillRect(518, 0, 13, 1024);
-  for (let i = 0; i < 1400; i++) {
-    actx.fillStyle = 'rgba(32, 36, 44, 0.34)';
-    actx.fillRect(491 + rng() * 42, rng() * 1024, 2 + rng() * 3, 2 + rng() * 4);
-    if (i < 550) {
-      const sideX = i % 2 === 0 ? 45 + rng() * 17 : 962 + rng() * 17;
+  // Subtle dashed white inner passing markers flanking bold amber center highway line
+  actx.fillStyle = 'rgba(241, 245, 249, 0.85)';
+  for (let y = 24; y < 1024; y += 128) {
+    actx.fillRect(256, y, 8, 56);
+    actx.fillRect(760, y, 8, 56);
+  }
+
+  // Bold sunlit amber-gold center highway stripe with subtle road wear
+  actx.fillStyle = '#fbbf24';
+  actx.fillRect(496, 0, 28, 1024);
+  for (let i = 0; i < 1200; i++) {
+    actx.fillStyle = 'rgba(32, 36, 44, 0.28)';
+    actx.fillRect(494 + rng() * 32, rng() * 1024, 2 + rng() * 3, 2 + rng() * 4);
+    if (i < 480) {
+      const sideX = i % 2 === 0 ? 41 + rng() * 18 : 965 + rng() * 18;
       actx.fillRect(sideX, rng() * 1024, 2, 3);
     }
   }
 
   // Reflective Cat's-Eye highway studs along centerline & edge shoulders
   for (let y = 128; y < 1024; y += 256) {
-    actx.fillStyle = '#fde68a';
-    actx.fillRect(508, y - 5, 8, 10);
-    actx.fillStyle = '#f8fafc';
-    actx.fillRect(64, y - 4, 6, 8);
-    actx.fillRect(954, y - 4, 6, 8);
+    actx.fillStyle = '#fef08a';
+    actx.fillRect(506, y - 5, 8, 10);
+    actx.fillStyle = '#ffffff';
+    actx.fillRect(62, y - 4, 6, 8);
+    actx.fillRect(956, y - 4, 6, 8);
   }
 
   const asphaltMap = new THREE.CanvasTexture(asphaltCanvas);
@@ -590,40 +600,238 @@ export function createProceduralTextures(
   pineBoughMap.colorSpace = THREE.SRGBColorSpace;
   pineBoughMap.anisotropy = aniso;
 
-  // 11. Wild Meadow Grass Clump Alpha-Cutout Texture (sRGB RGBA)
+  // 11. Lush Multi-Blade Wild Meadow Grass Clump Alpha-Cutout Texture (sRGB RGBA)
   const grCanvas = document.createElement('canvas');
   grCanvas.width = 256;
   grCanvas.height = 256;
   const grctx = grCanvas.getContext('2d')!;
   grctx.clearRect(0, 0, 256, 256);
 
-  const bladeCount = 13;
+  const bladeCount = 19;
   for (let b = 0; b < bladeCount; b++) {
     const frac = b / (bladeCount - 1);
-    const rootX = 88 + frac * 80 + (rng() - 0.5) * 12;
-    const leanX = (frac - 0.5) * 125 + (rng() - 0.5) * 28;
-    const tipY = 18 + Math.abs(frac - 0.5) * 58 + rng() * 26;
-    const tipX = Math.max(10, Math.min(246, rootX + leanX));
-    const ctrlX = rootX + leanX * 0.36;
-    const ctrlY = 135;
-    const halfBase = 6 + rng() * 4;
+    const rootX = 66 + frac * 124 + (rng() - 0.5) * 14;
+    const leanX = (frac - 0.5) * 138 + (rng() - 0.5) * 32;
+    const tipY = 12 + Math.abs(frac - 0.5) * 52 + rng() * 34;
+    const tipX = Math.max(8, Math.min(248, rootX + leanX));
+    const ctrlX = rootX + leanX * 0.38;
+    const ctrlY = 132;
+    const halfBase = 5.5 + rng() * 4.5;
 
     const gGrad = grctx.createLinearGradient(rootX, 256, tipX, tipY);
-    gGrad.addColorStop(0, '#2a4d1f');
-    gGrad.addColorStop(0.45, b % 2 === 0 ? '#4e8a33' : '#5e9c3b');
-    gGrad.addColorStop(1, '#a3c959');
+    gGrad.addColorStop(0, '#1f3f18');
+    gGrad.addColorStop(0.45, b % 2 === 0 ? '#45832e' : '#579a39');
+    gGrad.addColorStop(1, b % 3 === 0 ? '#b4d665' : '#96c450');
 
     grctx.fillStyle = gGrad;
     grctx.beginPath();
     grctx.moveTo(rootX - halfBase, 256);
-    grctx.quadraticCurveTo(ctrlX - halfBase * 0.45, ctrlY, tipX, tipY);
-    grctx.quadraticCurveTo(ctrlX + halfBase * 0.45, ctrlY, rootX + halfBase, 256);
+    grctx.quadraticCurveTo(ctrlX - halfBase * 0.42, ctrlY, tipX, tipY);
+    grctx.quadraticCurveTo(ctrlX + halfBase * 0.42, ctrlY, rootX + halfBase, 256);
     grctx.closePath();
     grctx.fill();
   }
   const grassTuftMap = new THREE.CanvasTexture(grCanvas);
   grassTuftMap.colorSpace = THREE.SRGBColorSpace;
   grassTuftMap.anisotropy = aniso;
+
+  // 11b. Tropical Jungle Broadleaf Canopy Cluster Texture (sRGB RGBA)
+  const jlCanvas = document.createElement('canvas');
+  jlCanvas.width = 512;
+  jlCanvas.height = 512;
+  const jlctx = jlCanvas.getContext('2d')!;
+  jlctx.clearRect(0, 0, 512, 512);
+
+  // Subtle woody twig substructure
+  jlctx.strokeStyle = '#3b2818';
+  jlctx.lineWidth = 6;
+  jlctx.lineCap = 'round';
+  for (let br = 0; br < 5; br++) {
+    const ba = (br / 5) * Math.PI * 2 + 0.3;
+    jlctx.beginPath();
+    jlctx.moveTo(256, 256);
+    jlctx.lineTo(256 + Math.cos(ba) * 160, 256 + Math.sin(ba) * 160);
+    jlctx.stroke();
+  }
+
+  // Rich overlapping tropical leaves (dark inner shadow leaves + vibrant outer lit leaves)
+  for (let l = 0; l < 115; l++) {
+    const ring = l < 42 ? 0 : l < 85 ? 1 : 2;
+    const rad = (ring === 0 ? rng() * 95 : ring === 1 ? 65 + rng() * 110 : 90 + rng() * 115);
+    const a = rng() * Math.PI * 2;
+    const lx = 256 + Math.cos(a) * rad;
+    const ly = 256 + Math.sin(a) * rad;
+    const rot = a + (rng() - 0.5) * 0.9;
+    const len = 34 + rng() * 34;
+    const wid = 16 + rng() * 13;
+
+    jlctx.save();
+    jlctx.translate(lx, ly);
+    jlctx.rotate(rot);
+
+    const gGrad = jlctx.createLinearGradient(-len * 0.5, 0, len * 0.5, 0);
+    if (ring === 0) {
+      gGrad.addColorStop(0, '#133519');
+      gGrad.addColorStop(1, '#235927');
+    } else if (ring === 1) {
+      gGrad.addColorStop(0, '#1e5423');
+      gGrad.addColorStop(0.55, '#2f7a32');
+      gGrad.addColorStop(1, '#4ca33f');
+    } else {
+      gGrad.addColorStop(0, '#2a6f2c');
+      gGrad.addColorStop(0.6, '#489b3b');
+      gGrad.addColorStop(1, '#79c24f');
+    }
+    jlctx.fillStyle = gGrad;
+    jlctx.beginPath();
+    jlctx.moveTo(-len * 0.5, 0);
+    jlctx.quadraticCurveTo(0, -wid, len * 0.5, 0);
+    jlctx.quadraticCurveTo(0, wid, -len * 0.5, 0);
+    jlctx.closePath();
+    jlctx.fill();
+
+    // Central leaf midrib vein
+    jlctx.strokeStyle = 'rgba(180, 235, 130, 0.25)';
+    jlctx.lineWidth = 1.4;
+    jlctx.beginPath();
+    jlctx.moveTo(-len * 0.42, 0);
+    jlctx.lineTo(len * 0.42, 0);
+    jlctx.stroke();
+    jlctx.restore();
+  }
+  const jungleLeafMap = new THREE.CanvasTexture(jlCanvas);
+  jungleLeafMap.colorSpace = THREE.SRGBColorSpace;
+  jungleLeafMap.anisotropy = aniso;
+
+  // 11c. Coastal Cypress / Eucalyptus Plume Foliage Texture (sRGB RGBA)
+  const cyCanvas = document.createElement('canvas');
+  cyCanvas.width = 512;
+  cyCanvas.height = 512;
+  const cyctx = cyCanvas.getContext('2d')!;
+  cyctx.clearRect(0, 0, 512, 512);
+
+  cyctx.strokeStyle = '#473422';
+  cyctx.lineWidth = 8;
+  cyctx.lineCap = 'round';
+  cyctx.beginPath();
+  cyctx.moveTo(256, 495);
+  cyctx.lineTo(256, 36);
+  cyctx.stroke();
+
+  for (let s = 0; s < 140; s++) {
+    const t = s / 139;
+    const cy = 465 - t * 405;
+    const spread = Math.sin(Math.pow(t, 0.72) * Math.PI * 0.94 + 0.12) * 155;
+    const cx = 256 + (rng() - 0.5) * spread * 1.45;
+    const rot = (cx - 256) * 0.0055 + (rng() - 0.5) * 0.6;
+    const rx = 14 + rng() * 16;
+    const ry = 28 + rng() * 26;
+
+    cyctx.save();
+    cyctx.translate(cx, cy);
+    cyctx.rotate(rot);
+    const tone = rng();
+    cyctx.fillStyle =
+      tone < 0.33
+        ? '#1d4935'
+        : tone < 0.68
+          ? '#2e6a4a'
+          : '#498b60';
+    cyctx.beginPath();
+    cyctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    cyctx.fill();
+    cyctx.restore();
+  }
+  const cypressFoliageMap = new THREE.CanvasTexture(cyCanvas);
+  cypressFoliageMap.colorSpace = THREE.SRGBColorSpace;
+  cypressFoliageMap.anisotropy = aniso;
+
+  // 11d. Flowering Sakura / Coral Blossom Foliage Texture (sRGB RGBA)
+  const blCanvas = document.createElement('canvas');
+  blCanvas.width = 512;
+  blCanvas.height = 512;
+  const blctx = blCanvas.getContext('2d')!;
+  blctx.clearRect(0, 0, 512, 512);
+
+  // Soft green inner leaf clusters
+  for (let l = 0; l < 60; l++) {
+    const a = rng() * Math.PI * 2;
+    const rad = rng() * 175;
+    const lx = 256 + Math.cos(a) * rad;
+    const ly = 256 + Math.sin(a) * rad;
+    blctx.save();
+    blctx.translate(lx, ly);
+    blctx.rotate(a);
+    blctx.fillStyle = l % 2 === 0 ? '#2f6d31' : '#4a8e3f';
+    blctx.beginPath();
+    blctx.ellipse(0, 0, 26, 13, 0, 0, Math.PI * 2);
+    blctx.fill();
+    blctx.restore();
+  }
+  // Clustered 5-petal white-tinted blossoms (tinted dynamically per-instance via instanceColor!)
+  for (let f = 0; f < 95; f++) {
+    const a = rng() * Math.PI * 2;
+    const rad = 20 + rng() * 195;
+    const fx = 256 + Math.cos(a) * rad;
+    const fy = 256 + Math.sin(a) * rad;
+    const pr = 9 + rng() * 8;
+    blctx.fillStyle = f % 3 === 0 ? '#ffffff' : f % 3 === 1 ? '#ffe8ef' : '#ffd1df';
+    for (let p = 0; p < 5; p++) {
+      const pa = (p / 5) * Math.PI * 2;
+      blctx.beginPath();
+      blctx.arc(fx + Math.cos(pa) * pr * 0.65, fy + Math.sin(pa) * pr * 0.65, pr * 0.56, 0, Math.PI * 2);
+      blctx.fill();
+    }
+    blctx.fillStyle = '#fde68a';
+    blctx.beginPath();
+    blctx.arc(fx, fy, pr * 0.28, 0, Math.PI * 2);
+    blctx.fill();
+  }
+  const blossomLeafMap = new THREE.CanvasTexture(blCanvas);
+  blossomLeafMap.colorSpace = THREE.SRGBColorSpace;
+  blossomLeafMap.anisotropy = aniso;
+
+  // 11e. Giant Tropical Jungle Sword Fern Frond Texture (sRGB RGBA)
+  const fnCanvas = document.createElement('canvas');
+  fnCanvas.width = 512;
+  fnCanvas.height = 512;
+  const fnctx = fnCanvas.getContext('2d')!;
+  fnctx.clearRect(0, 0, 512, 512);
+
+  fnctx.strokeStyle = '#3b6421';
+  fnctx.lineWidth = 8;
+  fnctx.lineCap = 'round';
+  fnctx.beginPath();
+  fnctx.moveTo(256, 506);
+  fnctx.lineTo(256, 22);
+  fnctx.stroke();
+
+  const pinnaPairs = 26;
+  for (let i = 0; i < pinnaPairs; i++) {
+    const t = i / (pinnaPairs - 1);
+    const yBase = 486 - t * 444;
+    const env = Math.sin(Math.pow(t, 0.55) * Math.PI * 0.94 + 0.14);
+    const len = 26 + env * 170;
+    const wid = 13 + (1 - t) * 7;
+    for (const side of [-1, 1]) {
+      const tipX = 256 + side * len;
+      const tipY = yBase - 26;
+      const fGrad = fnctx.createLinearGradient(256, yBase, tipX, tipY);
+      fGrad.addColorStop(0, '#22521b');
+      fGrad.addColorStop(0.55, i % 2 === 0 ? '#377c28' : '#438d2e');
+      fGrad.addColorStop(1, '#79ba44');
+      fnctx.fillStyle = fGrad;
+      fnctx.beginPath();
+      fnctx.moveTo(256, yBase - wid * 0.45);
+      fnctx.quadraticCurveTo(256 + side * len * 0.55, yBase - 24, tipX, tipY);
+      fnctx.quadraticCurveTo(256 + side * len * 0.55, yBase + wid * 0.35, 256, yBase + wid * 0.45);
+      fnctx.closePath();
+      fnctx.fill();
+    }
+  }
+  const fernFrondMap = new THREE.CanvasTexture(fnCanvas);
+  fernFrondMap.colorSpace = THREE.SRGBColorSpace;
+  fernFrondMap.anisotropy = aniso;
 
   // 12. Multi-Lobe Cloud Sprite Texture
   const clCanvas = document.createElement('canvas');
@@ -668,6 +876,10 @@ export function createProceduralTextures(
     barkNormalMap,
     palmFrondMap,
     pineBoughMap,
+    jungleLeafMap,
+    cypressFoliageMap,
+    blossomLeafMap,
+    fernFrondMap,
     grassTuftMap,
     cloudMap,
     dispose: () => {
@@ -686,6 +898,10 @@ export function createProceduralTextures(
       barkNormalMap.dispose();
       palmFrondMap.dispose();
       pineBoughMap.dispose();
+      jungleLeafMap.dispose();
+      cypressFoliageMap.dispose();
+      blossomLeafMap.dispose();
+      fernFrondMap.dispose();
       grassTuftMap.dispose();
       cloudMap.dispose();
     },

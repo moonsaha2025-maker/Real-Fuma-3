@@ -195,6 +195,140 @@ function buildGrassTuftGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
+// Build volumetric multi-card broadleaf canopy dome for Jungle Rain Trees, Shrubs & Blossom Trees
+function buildBroadleafCanopyGeometry(): THREE.BufferGeometry {
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  let idxOffset = 0;
+
+  // 4 intersecting angled upright/tilted planes around crown center
+  for (let p = 0; p < 4; p++) {
+    const yaw = (p / 4) * Math.PI + 0.25;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const r = 1.55;
+    const h0 = -0.55;
+    const h1 = 1.25;
+    const tilt = (p % 2 === 0 ? 1 : -1) * 0.28;
+    const pts: Array<[number, number, number, number, number]> = [
+      [-r, h0, -tilt, 0, 0],
+      [r, h0, -tilt, 1, 0],
+      [-r * 0.92, h1, tilt, 0, 1],
+      [r * 0.92, h1, tilt, 1, 1],
+    ];
+    for (const [lx, ly, lz, u, v] of pts) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(idxOffset, idxOffset + 1, idxOffset + 2);
+    indices.push(idxOffset + 1, idxOffset + 3, idxOffset + 2);
+    idxOffset += 4;
+  }
+
+  // 2 horizontal/domed upper umbrella caps so canopy looks dense from chase camera
+  for (let c = 0; c < 2; c++) {
+    const yaw = c * (Math.PI / 2) + 0.35;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const r = 1.65;
+    const yBase = 0.28 + c * 0.28;
+    const pts: Array<[number, number, number, number, number]> = [
+      [-r, yBase, -r * 0.85, 0, 0],
+      [r, yBase, -r * 0.85, 1, 0],
+      [-r * 0.85, yBase + 0.45, r * 0.85, 0, 1],
+      [r * 0.85, yBase + 0.45, r * 0.85, 1, 1],
+    ];
+    for (const [lx, ly, lz, u, v] of pts) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(idxOffset, idxOffset + 1, idxOffset + 2);
+    indices.push(idxOffset + 1, idxOffset + 3, idxOffset + 2);
+    idxOffset += 4;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Build tall narrow columnar plume geometry for Coastal Cypress & Eucalyptus
+function buildCypressPlumeGeometry(): THREE.BufferGeometry {
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const planes = 3;
+  const hw = 1.05;
+  const height = 4.2;
+
+  for (let p = 0; p < planes; p++) {
+    const yaw = (p / planes) * Math.PI;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const base = p * 4;
+    const pts: Array<[number, number, number, number, number]> = [
+      [-hw, 0, 0, 0, 0],
+      [hw, 0, 0, 1, 0],
+      [-hw * 0.85, height, 0, 0, 1],
+      [hw * 0.85, height, 0, 1, 1],
+    ];
+    for (const [lx, ly, lz, u, v] of pts) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(base, base + 1, base + 2);
+    indices.push(base + 1, base + 3, base + 2);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Build 6-frond radiating Giant Tropical Jungle Fern rosette anchored at y=0
+function buildJungleFernGeometry(): THREE.BufferGeometry {
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const fronds = 6;
+  const hw = 0.62;
+  const len = 1.65;
+
+  for (let f = 0; f < fronds; f++) {
+    const yaw = (f / fronds) * Math.PI * 2 + (f % 2) * 0.14;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const base = f * 4;
+    const tipY = 0.72 + (f % 2) * 0.24;
+    const pts: Array<[number, number, number, number, number]> = [
+      [-hw * 0.35, 0.04, 0.06, 0, 0],
+      [hw * 0.35, 0.04, 0.06, 1, 0],
+      [-hw, tipY, len, 0, 1],
+      [hw, tipY, len, 1, 1],
+    ];
+    for (const [lx, ly, lz, u, v] of pts) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(base, base + 1, base + 2);
+    indices.push(base + 1, base + 3, base + 2);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function attachWindSway(
   material: THREE.MeshStandardMaterial,
   windUniform: { value: number },
@@ -273,14 +407,24 @@ export function buildRealFumaWorld(
       tmpColor.set('#dec296'); // Sunlit coastal sand & underwater shoals
     } else if (y > 52) {
       tmpColor.set('#e2e8f0'); // High alpine snow crests well above road
-    } else if (x < -140 && z > -460 && z < 440) {
-      // Sunset Coast & Palm Canyon warm lush green + sandstone bluffs
-      tmpColor.set('#447838');
-      if (slope > 0.16 || y > 13) {
-        rockColor.set('#967a58');
+    } else if (x < 60 && z < -280) {
+      // Palm Canyon & Tropical Jungle Floor: deep rainforest emerald moss & dark loam
+      tmpColor.set('#224f23');
+      if (slope > 0.21 || y > 26) {
+        rockColor.set('#5a5143');
         tmpColor.lerp(
           rockColor,
-          Math.min(0.92, (slope - 0.11) * 2.8 + Math.max(0, y - 13) * 0.05),
+          Math.min(0.84, (slope - 0.16) * 2.5 + Math.max(0, y - 26) * 0.04),
+        );
+      }
+    } else if (x < -140 && z > -460 && z < 440) {
+      // Sunset Coast lush tropical green + coastal sandstone bluffs
+      tmpColor.set('#376e30');
+      if (slope > 0.18 || y > 15) {
+        rockColor.set('#8c7355');
+        tmpColor.lerp(
+          rockColor,
+          Math.min(0.88, (slope - 0.13) * 2.6 + Math.max(0, y - 15) * 0.045),
         );
       }
     } else if (z > 120 && x > 180) {
@@ -328,9 +472,9 @@ export function buildRealFumaWorld(
     normalMap: textures.asphaltNormalMap,
     normalScale: new THREE.Vector2(0.75, 0.75),
     roughnessMap: textures.asphaltRoughnessMap,
-    roughness: 0.8,
-    metalness: 0.08,
-    envMapIntensity: 0.78,
+    roughness: 0.68,
+    metalness: 0.1,
+    envMapIntensity: 0.94,
   });
   const shoulderSkirtMat = new THREE.MeshStandardMaterial({
     map: textures.concreteCurbMap,
@@ -440,7 +584,8 @@ export function buildRealFumaWorld(
         const st = TRACK_STATIONS[idx];
         const lat = side * (st.roadWidth * 0.5 + 0.52);
         const baseY = st.y + lat * Math.sin(st.bankRad);
-        const h = col === 0 ? 0.44 : 0.78;
+        const hidden = side === -1 && st.zoneId === 'sunset_coast';
+        const h = hidden ? (col === 0 ? -1.4 : -1.1) : (col === 0 ? 0.44 : 0.78);
         return {
           x: st.x + st.rx * lat,
           y: baseY + h,
@@ -474,6 +619,7 @@ export function buildRealFumaWorld(
     const st = TRACK_STATIONS[i];
     const yaw = Math.atan2(st.tx, st.tz);
     for (const side of [-1, 1]) {
+      if (side === -1 && st.zoneId === 'sunset_coast') continue;
       const lat = side * (st.roadWidth * 0.5 + 0.62);
       const y = st.y + lat * Math.sin(st.bankRad) + 0.42;
       dummy.position.set(st.x + st.rx * lat, y, st.z + st.rz * lat);
@@ -653,8 +799,8 @@ export function buildRealFumaWorld(
 
   // 8. Sculpted Roadside Coastal Palms (Textured Bark + Normal + Feathered Alpha-Cutout Fronds + Wind Sway)
   const palmSpots: Array<{ x: number; y: number; z: number; s: number; lean: number }> = [];
-  for (let i = 0; i < 82; i++) {
-    const s = 0.012 + (i / 82) * 0.43;
+  for (let i = 0; i < 105; i++) {
+    const s = 0.012 + (i / 105) * 0.43;
     const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
     const side = i % 2 === 0 ? -1 : 1;
     const dist = st.roadWidth * 0.5 + 8.0 + (i % 5) * 4.8;
@@ -763,9 +909,9 @@ export function buildRealFumaWorld(
 
   // 9. Alpine Conifer Pine Groves (Textured Bark + Alpha-Cutout Needle Boughs + Dappled Shadows)
   const pineSpots: Array<{ x: number; y: number; z: number; s: number }> = [];
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < 310; i++) {
     const angle = i * 2.39996;
-    const rad = 58 + (i % 58) * 9.5;
+    const rad = 52 + (i % 62) * 9.5;
     const px = 220 + Math.cos(angle) * rad;
     const pz = -260 + Math.sin(angle) * rad;
     const proj = projectOntoTrack(px, pz);
@@ -835,58 +981,430 @@ export function buildRealFumaWorld(
     disposables.push(trunkGeo, trunkMat, boughGeo, foliageMat);
   }
 
-  // 10. Instanced Wind-Swayed Wild Roadside & Meadow Grass (3,600+ Tufts)
+  // 9b. Dense Tropical Jungle Biome (Palm Canyon & Foothills: Giant Banyan Rain Trees + Shrubs + Ferns)
+  const jungleSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
+  for (let i = 0; i < 340 && jungleSpots.length < 220; i++) {
+    let jx = 0;
+    let jz = 0;
+    if (i < 175) {
+      // Dense overhanging rainforest corridor framing Palm Canyon & northern coastal foothills
+      const s = 0.2 + ((i * 13) % 175) / 175 * 0.295;
+      const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+      if (st.hasTunnel || st.isBridge) continue;
+      const side = i % 2 === 0 ? 1 : -1;
+      const dist = st.roadWidth * 0.5 + 8.5 + ((i * 29) % 100) * 0.65;
+      jx = st.x + st.rx * (side * dist) + Math.sin(i * 1.9) * 3.0;
+      jz = st.z + st.rz * (side * dist) + Math.cos(i * 2.7) * 3.0;
+    } else {
+      // Deep interior jungle basin & valley canopy clusters
+      const k = i - 175;
+      const a = k * 2.399963;
+      const rad = 28 + Math.sqrt(k / 165) * 235;
+      jx = -225 + Math.cos(a) * rad;
+      jz = -345 + Math.sin(a) * rad;
+    }
+
+    if (Math.abs(jx) > WORLD_HALF_SIZE - 35 || Math.abs(jz) > WORLD_HALF_SIZE - 35) continue;
+    const py = getTerrainHeight(jx, jz);
+    if (py < 1.2 || py > 36) continue;
+
+    const proj = projectOntoTrack(jx, jz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 7.2) continue;
+
+    jungleSpots.push({
+      x: jx,
+      y: py,
+      z: jz,
+      s: 0.92 + (i % 7) * 0.14,
+      yaw: (i * 1.47) % (Math.PI * 2),
+    });
+  }
+
+  if (jungleSpots.length > 0) {
+    // Fluted banyan / rain-tree trunk with curved upper lean
+    const jTrunkGeo = new THREE.CylinderGeometry(0.32, 0.78, 9.6, 9, 5);
+    const jtPos = jTrunkGeo.attributes.position;
+    for (let i = 0; i < jtPos.count; i++) {
+      const py = jtPos.getY(i);
+      const t = Math.max(0, Math.min(1, (py + 4.8) / 9.6));
+      jtPos.setX(i, jtPos.getX(i) + Math.sin(t * Math.PI * 0.85) * 0.55);
+    }
+    jtPos.needsUpdate = true;
+    jTrunkGeo.computeVertexNormals();
+    jTrunkGeo.computeBoundingSphere();
+
+    const jTrunkMat = new THREE.MeshStandardMaterial({
+      map: textures.barkMap,
+      normalMap: textures.barkNormalMap,
+      normalScale: new THREE.Vector2(1.4, 1.4),
+      color: 0x5c4738,
+      roughness: 0.92,
+    });
+
+    const canopyGeo = buildBroadleafCanopyGeometry();
+    const jungleCanopyMat = new THREE.MeshStandardMaterial({
+      map: textures.jungleLeafMap,
+      alphaTest: 0.38,
+      side: THREE.DoubleSide,
+      roughness: 0.72,
+      metalness: 0.02,
+    });
+    attachWindSway(jungleCanopyMat, windUniform, 'pine');
+
+    const clustersPerTree = 4;
+    const jTrunkInst = new THREE.InstancedMesh(jTrunkGeo, jTrunkMat, jungleSpots.length);
+    const jCrownInst = new THREE.InstancedMesh(
+      canopyGeo,
+      jungleCanopyMat,
+      jungleSpots.length * clustersPerTree,
+    );
+    jTrunkInst.castShadow = true;
+    jTrunkInst.receiveShadow = true;
+    jCrownInst.castShadow = true;
+    jCrownInst.receiveShadow = true;
+
+    const clusterOffsets: Array<[number, number, number, number]> = [
+      [0, 9.4, 0, 2.25],
+      [-2.3, 8.2, 1.4, 1.78],
+      [2.2, 8.4, 1.1, 1.85],
+      [0.2, 8.0, -2.2, 1.82],
+    ];
+
+    let jcIdx = 0;
+    jungleSpots.forEach((j, idx) => {
+      dummy.position.set(j.x, j.y + 4.5 * j.s, j.z);
+      dummy.rotation.set(0, j.yaw, 0);
+      dummy.scale.set(j.s, j.s, j.s);
+      dummy.updateMatrix();
+      jTrunkInst.setMatrixAt(idx, dummy.matrix);
+
+      const cosY = Math.cos(j.yaw);
+      const sinY = Math.sin(j.yaw);
+      for (let c = 0; c < clustersPerTree; c++) {
+        const [ox, oy, oz, cs] = clusterOffsets[c];
+        const wx = j.x + (ox * cosY + oz * sinY) * j.s;
+        const wz = j.z + (-ox * sinY + oz * cosY) * j.s;
+        dummy.position.set(wx, j.y + oy * j.s, wz);
+        dummy.rotation.set(0, j.yaw + c * 1.15, 0);
+        dummy.scale.set(j.s * cs, j.s * cs * 0.78, j.s * cs);
+        dummy.updateMatrix();
+        jCrownInst.setMatrixAt(jcIdx, dummy.matrix);
+        jCrownInst.setColorAt(
+          jcIdx,
+          new THREE.Color().setHSL(0.28 + ((idx + c) % 4) * 0.016, 0.48, 0.44 + ((idx + c) % 3) * 0.08),
+        );
+        jcIdx++;
+      }
+    });
+    jTrunkInst.instanceMatrix.needsUpdate = true;
+    jCrownInst.instanceMatrix.needsUpdate = true;
+    if (jCrownInst.instanceColor) jCrownInst.instanceColor.needsUpdate = true;
+    jTrunkInst.computeBoundingSphere();
+    jCrownInst.computeBoundingSphere();
+    worldGroup.add(jTrunkInst, jCrownInst);
+    disposables.push(jTrunkGeo, jTrunkMat, canopyGeo, jungleCanopyMat);
+
+    // Dense Jungle Understory Shrubs & Bushes (760 instances)
+    const bushSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
+    for (let i = 0; i < 1100 && bushSpots.length < 760; i++) {
+      const s = 0.18 + ((i * 17) % 1000) / 1000 * 0.34;
+      const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+      if (st.hasTunnel || st.isBridge) continue;
+      const side = i % 2 === 0 ? 1 : -1;
+      const dist = st.roadWidth * 0.5 + 4.4 + ((i * 41) % 100) * 0.52;
+      const bx = st.x + st.rx * (side * dist) + Math.sin(i * 2.1) * 2.4;
+      const bz = st.z + st.rz * (side * dist) + Math.cos(i * 1.7) * 2.4;
+      if (Math.abs(bx) > WORLD_HALF_SIZE - 25 || Math.abs(bz) > WORLD_HALF_SIZE - 25) continue;
+      const py = getTerrainHeight(bx, bz);
+      if (py < 1.1 || py > 36) continue;
+      const proj = projectOntoTrack(bx, bz);
+      if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 4.2) continue;
+      bushSpots.push({ x: bx, y: py - 0.1, z: bz, s: 0.75 + (i % 5) * 0.22, yaw: (i * 1.9) % (Math.PI * 2) });
+    }
+    if (bushSpots.length > 0) {
+      const bushInst = new THREE.InstancedMesh(canopyGeo, jungleCanopyMat, bushSpots.length);
+      bushInst.castShadow = true;
+      bushInst.receiveShadow = true;
+      bushSpots.forEach((b, idx) => {
+        dummy.position.set(b.x, b.y + 0.7 * b.s, b.z);
+        dummy.rotation.set(0, b.yaw, 0);
+        dummy.scale.set(b.s * 1.15, b.s * 0.85, b.s * 1.15);
+        dummy.updateMatrix();
+        bushInst.setMatrixAt(idx, dummy.matrix);
+        bushInst.setColorAt(
+          idx,
+          new THREE.Color().setHSL(0.26 + (idx % 5) * 0.015, 0.5, 0.4 + (idx % 4) * 0.07),
+        );
+      });
+      bushInst.instanceMatrix.needsUpdate = true;
+      if (bushInst.instanceColor) bushInst.instanceColor.needsUpdate = true;
+      bushInst.computeBoundingSphere();
+      worldGroup.add(bushInst);
+    }
+  }
+
+  // 9c. Giant Tropical Jungle Ferns (1,850 Ground-Cover Crowns in Palm Canyon & Humid Valleys)
+  const fernSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
+  for (let i = 0; i < 2800 && fernSpots.length < 1850; i++) {
+    let fx = 0;
+    let fz = 0;
+    if (i < 1600) {
+      const s = 0.16 + ((i * 23) % 1000) / 1000 * 0.37;
+      const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+      if (st.hasTunnel || st.isBridge) continue;
+      const side = i % 2 === 0 ? 1 : -1;
+      const dist = st.roadWidth * 0.5 + 2.5 + ((i * 31) % 100) * 0.36;
+      fx = st.x + st.rx * (side * dist) + Math.sin(i * 1.4) * 2.0;
+      fz = st.z + st.rz * (side * dist) + Math.cos(i * 2.1) * 2.0;
+    } else {
+      const k = i - 1600;
+      const a = k * 2.399963;
+      const rad = 18 + Math.sqrt(k / 1200) * 240;
+      fx = -225 + Math.cos(a) * rad;
+      fz = -345 + Math.sin(a) * rad;
+    }
+    if (Math.abs(fx) > WORLD_HALF_SIZE - 22 || Math.abs(fz) > WORLD_HALF_SIZE - 22) continue;
+    const py = getTerrainHeight(fx, fz);
+    if (py < 1.0 || py > 35) continue;
+    const proj = projectOntoTrack(fx, fz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 2.3) continue;
+    fernSpots.push({ x: fx, y: py - 0.05, z: fz, s: 0.72 + (i % 5) * 0.16, yaw: (i * 1.7) % (Math.PI * 2) });
+  }
+  if (fernSpots.length > 0) {
+    const fernGeo = buildJungleFernGeometry();
+    const fernMat = new THREE.MeshStandardMaterial({
+      map: textures.fernFrondMap,
+      alphaTest: 0.4,
+      side: THREE.DoubleSide,
+      roughness: 0.74,
+      metalness: 0.02,
+    });
+    attachWindSway(fernMat, windUniform, 'grass');
+    const fernInst = new THREE.InstancedMesh(fernGeo, fernMat, fernSpots.length);
+    fernInst.receiveShadow = true;
+    fernInst.castShadow = false;
+    fernSpots.forEach((f, idx) => {
+      dummy.position.set(f.x, f.y, f.z);
+      dummy.rotation.set(0, f.yaw, 0);
+      dummy.scale.set(f.s, f.s, f.s);
+      dummy.updateMatrix();
+      fernInst.setMatrixAt(idx, dummy.matrix);
+      fernInst.setColorAt(
+        idx,
+        new THREE.Color().setHSL(0.27 + (idx % 4) * 0.015, 0.52, 0.46 + (idx % 3) * 0.08),
+      );
+    });
+    fernInst.instanceMatrix.needsUpdate = true;
+    if (fernInst.instanceColor) fernInst.instanceColor.needsUpdate = true;
+    fernInst.computeBoundingSphere();
+    worldGroup.add(fernInst);
+    disposables.push(fernGeo, fernMat);
+  }
+
+  // 9d. Coastal Cypress & Eucalyptus Groves (Sunset Coast, Harbor Bluffs & Mountain Foot)
+  const cypressSpots: Array<{ x: number; y: number; z: number; s: number }> = [];
+  for (let i = 0; i < 240 && cypressSpots.length < 185; i++) {
+    // Line Sunset Coast & Fujimi Harbor hillsides + alpine foothill transition
+    const s = i < 110
+      ? 0.02 + (i / 110) * 0.21
+      : 0.65 + ((i - 110) / 130) * 0.15;
+    const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+    if (st.hasTunnel || st.isBridge) continue;
+    const side = i % 2 === 0 ? 1 : -1;
+    const dist = st.roadWidth * 0.5 + 11 + ((i * 23) % 90) * 0.55;
+    const cx = st.x + st.rx * (side * dist) + Math.sin(i * 2.4) * 2.5;
+    const cz = st.z + st.rz * (side * dist) + Math.cos(i * 1.3) * 2.5;
+    if (Math.abs(cx) > WORLD_HALF_SIZE - 30 || Math.abs(cz) > WORLD_HALF_SIZE - 30) continue;
+    const py = getTerrainHeight(cx, cz);
+    if (py < 1.3 || py > 44) continue;
+    const proj = projectOntoTrack(cx, cz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 6.5) continue;
+    cypressSpots.push({ x: cx, y: py, z: cz, s: 0.88 + (i % 5) * 0.16 });
+  }
+  if (cypressSpots.length > 0) {
+    const cyTrunkGeo = new THREE.CylinderGeometry(0.14, 0.34, 7.2, 8);
+    const cyTrunkMat = new THREE.MeshStandardMaterial({
+      map: textures.barkMap,
+      normalMap: textures.barkNormalMap,
+      normalScale: new THREE.Vector2(1.1, 1.1),
+      color: 0x856d57,
+      roughness: 0.9,
+    });
+    const plumeGeo = buildCypressPlumeGeometry();
+    const plumeMat = new THREE.MeshStandardMaterial({
+      map: textures.cypressFoliageMap,
+      alphaTest: 0.38,
+      side: THREE.DoubleSide,
+      roughness: 0.78,
+      metalness: 0.02,
+    });
+    attachWindSway(plumeMat, windUniform, 'pine');
+
+    const cyTrunkInst = new THREE.InstancedMesh(cyTrunkGeo, cyTrunkMat, cypressSpots.length);
+    const plumeInst = new THREE.InstancedMesh(plumeGeo, plumeMat, cypressSpots.length * 2);
+    cyTrunkInst.castShadow = true;
+    cyTrunkInst.receiveShadow = true;
+    plumeInst.castShadow = true;
+    plumeInst.receiveShadow = true;
+
+    cypressSpots.forEach((c, idx) => {
+      dummy.position.set(c.x, c.y + 3.5 * c.s, c.z);
+      dummy.rotation.set(0, idx * 0.85, 0);
+      dummy.scale.set(c.s, c.s, c.s);
+      dummy.updateMatrix();
+      cyTrunkInst.setMatrixAt(idx, dummy.matrix);
+
+      const col = new THREE.Color().setHSL(0.36 + (idx % 4) * 0.015, 0.38, 0.45 + (idx % 3) * 0.08);
+      for (let tier = 0; tier < 2; tier++) {
+        const ts = c.s * (tier === 0 ? 1.15 : 0.85);
+        dummy.position.set(c.x, c.y + (2.6 + tier * 3.1) * c.s, c.z);
+        dummy.rotation.set(0, idx * 1.1 + tier * 0.6, 0);
+        dummy.scale.set(ts, ts * 1.15, ts);
+        dummy.updateMatrix();
+        plumeInst.setMatrixAt(idx * 2 + tier, dummy.matrix);
+        plumeInst.setColorAt(idx * 2 + tier, col);
+      }
+    });
+    cyTrunkInst.instanceMatrix.needsUpdate = true;
+    plumeInst.instanceMatrix.needsUpdate = true;
+    if (plumeInst.instanceColor) plumeInst.instanceColor.needsUpdate = true;
+    cyTrunkInst.computeBoundingSphere();
+    plumeInst.computeBoundingSphere();
+    worldGroup.add(cyTrunkInst, plumeInst);
+    disposables.push(cyTrunkGeo, cyTrunkMat, plumeGeo, plumeMat);
+  }
+
+  // 9e. Ornamental Flowering Sakura & Tropical Flame Blossom Trees (Harbor, Coast & Jungle Clearings)
+  const blossomSpots: Array<{ x: number; y: number; z: number; s: number; tint: THREE.Color }> = [];
+  for (let i = 0; i < 120 && blossomSpots.length < 96; i++) {
+    const isHarbor = i % 2 === 0;
+    const s = isHarbor
+      ? 0.72 + (i / 120) * 0.25
+      : 0.08 + (i / 120) * 0.32;
+    const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+    if (st.hasTunnel || st.isBridge) continue;
+    const side = i % 4 < 2 ? 1 : -1;
+    const dist = st.roadWidth * 0.5 + 8.5 + (i % 5) * 3.5;
+    const bx = st.x + st.rx * (side * dist);
+    const bz = st.z + st.rz * (side * dist);
+    const py = getTerrainHeight(bx, bz);
+    if (py < 1.2 || py > 34) continue;
+    const proj = projectOntoTrack(bx, bz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 5.8) continue;
+
+    // Sakura rose pink near Fujimi Harbor vs warm tropical flame coral-gold in Coast & Jungle
+    const tint = isHarbor
+      ? new THREE.Color().setHSL(0.93 + (i % 3) * 0.012, 0.72, 0.78)
+      : new THREE.Color().setHSL(0.05 + (i % 3) * 0.025, 0.85, 0.66);
+    blossomSpots.push({ x: bx, y: py, z: bz, s: 0.84 + (i % 4) * 0.13, tint });
+  }
+  if (blossomSpots.length > 0) {
+    const blTrunkGeo = new THREE.CylinderGeometry(0.16, 0.38, 4.6, 8);
+    const blTrunkMat = new THREE.MeshStandardMaterial({
+      map: textures.barkMap,
+      normalMap: textures.barkNormalMap,
+      color: 0x4b362b,
+      roughness: 0.9,
+    });
+    const blCrownGeo = buildBroadleafCanopyGeometry();
+    const blCrownMat = new THREE.MeshStandardMaterial({
+      map: textures.blossomLeafMap,
+      alphaTest: 0.38,
+      side: THREE.DoubleSide,
+      roughness: 0.7,
+      metalness: 0.02,
+    });
+    attachWindSway(blCrownMat, windUniform, 'pine');
+
+    const blTrunkInst = new THREE.InstancedMesh(blTrunkGeo, blTrunkMat, blossomSpots.length);
+    const blCrownInst = new THREE.InstancedMesh(blCrownGeo, blCrownMat, blossomSpots.length * 2);
+    blTrunkInst.castShadow = true;
+    blTrunkInst.receiveShadow = true;
+    blCrownInst.castShadow = true;
+    blCrownInst.receiveShadow = true;
+
+    blossomSpots.forEach((b, idx) => {
+      dummy.position.set(b.x, b.y + 2.2 * b.s, b.z);
+      dummy.rotation.set(0, idx * 1.2, 0);
+      dummy.scale.set(b.s, b.s, b.s);
+      dummy.updateMatrix();
+      blTrunkInst.setMatrixAt(idx, dummy.matrix);
+
+      for (let k = 0; k < 2; k++) {
+        const off = k === 0 ? 0 : 1.1;
+        dummy.position.set(b.x + off * 0.6, b.y + (4.5 + k * 0.7) * b.s, b.z - off * 0.4);
+        dummy.rotation.set(0, idx * 0.9 + k * 1.4, 0);
+        const cs = b.s * (k === 0 ? 1.5 : 1.18);
+        dummy.scale.set(cs, cs * 0.82, cs);
+        dummy.updateMatrix();
+        blCrownInst.setMatrixAt(idx * 2 + k, dummy.matrix);
+        blCrownInst.setColorAt(idx * 2 + k, b.tint);
+      }
+    });
+    blTrunkInst.instanceMatrix.needsUpdate = true;
+    blCrownInst.instanceMatrix.needsUpdate = true;
+    if (blCrownInst.instanceColor) blCrownInst.instanceColor.needsUpdate = true;
+    blTrunkInst.computeBoundingSphere();
+    blCrownInst.computeBoundingSphere();
+    worldGroup.add(blTrunkInst, blCrownInst);
+    disposables.push(blTrunkGeo, blTrunkMat, blCrownGeo, blCrownMat);
+  }
+
+  // 10. Instanced Wind-Swayed Wild Roadside & Meadow Grass (11,000+ Tufts)
   const grassSpots: Array<{ x: number; y: number; z: number; sx: number; sy: number; yaw: number; tint: THREE.Color }> = [];
   const grassTint = new THREE.Color();
 
-  // Golden-angle spiral distribution centered near coastal/canyon/alpine corridors + roadside clusters
-  for (let i = 0; i < 6200 && grassSpots.length < 3600; i++) {
+  // Golden-angle spiral distribution centered near coastal/jungle/alpine corridors + dense roadside verges
+  for (let i = 0; i < 18500 && grassSpots.length < 11000; i++) {
     let gx = 0;
     let gz = 0;
-    if (i < 2800) {
-      // Roadside lush verges & embankments around the full 3.8km highway loop
-      const stIdx = (i * 19) % TRACK_STATION_COUNT;
+    if (i < 11500) {
+      // Dense multi-layered roadside verges & jungle shoulders around the full 3.8km highway loop
+      const stIdx = (i * 11) % TRACK_STATION_COUNT;
       const st = TRACK_STATIONS[stIdx];
+      if (st.isBridge) continue;
       const side = i % 2 === 0 ? 1 : -1;
-      const latDist = st.roadWidth * 0.5 + 2.2 + ((i * 37) % 100) * 0.28;
-      gx = st.x + st.rx * (side * latDist) + Math.sin(i * 1.7) * 1.6;
-      gz = st.z + st.rz * (side * latDist) + Math.cos(i * 2.3) * 1.6;
+      const latDist = st.roadWidth * 0.5 + 2.0 + ((i * 37) % 100) * 0.34;
+      gx = st.x + st.rx * (side * latDist) + Math.sin(i * 1.7) * 2.2;
+      gz = st.z + st.rz * (side * latDist) + Math.cos(i * 2.3) * 2.2;
     } else {
-      // Broader canyon/alpine/harbor meadows
-      const k = i - 2800;
+      // Broader jungle/canyon/alpine/harbor meadows
+      const k = i - 11500;
       const a = k * 2.399963;
-      const r = 45 + Math.sqrt(k / 3400) * 760;
+      const r = 38 + Math.sqrt(k / 7000) * 790;
       gx = Math.cos(a) * r;
       gz = Math.sin(a) * r;
     }
 
-    if (Math.abs(gx) > WORLD_HALF_SIZE - 20 || Math.abs(gz) > WORLD_HALF_SIZE - 20) continue;
+    if (Math.abs(gx) > WORLD_HALF_SIZE - 18 || Math.abs(gz) > WORLD_HALF_SIZE - 18) continue;
     const py = getTerrainHeight(gx, gz);
-    if (py < 0.95 || py > 39) continue; // Strictly above sea/beach sand & below alpine snowpeaks
+    if (py < 0.9 || py > 40) continue; // Strictly above sea/beach sand & below alpine snowpeaks
 
     const hx = getTerrainHeight(gx + 3, gz);
     const hz = getTerrainHeight(gx, gz + 3);
     const slope = Math.hypot(hx - py, hz - py) / 3;
-    if (slope > 0.44) continue; // Not on sheer vertical rock faces
+    if (slope > 0.48) continue; // Not on sheer vertical rock faces
 
     const proj = projectOntoTrack(gx, gz);
-    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.9) continue; // Keep tarmac & curbs clear
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.85) continue; // Keep tarmac & curbs clear
 
-    // Biome color harmony: warm coastal olive/sage in Sunset Coast & Palm Canyon vs deep forest emerald in Alpine Pass
-    if (gx < -140 && gz > -460 && gz < 440) {
-      grassTint.setHSL(0.22 + (i % 5) * 0.014, 0.46, 0.48 + (i % 4) * 0.06);
+    // Biome color harmony: lush emerald jungle in Palm Canyon, warm coastal olive in Sunset Coast, deep forest in Alpine
+    if (gx < 60 && gz < -280) {
+      grassTint.setHSL(0.27 + (i % 5) * 0.014, 0.54, 0.42 + (i % 4) * 0.06);
+    } else if (gx < -140 && gz > -460 && gz < 440) {
+      grassTint.setHSL(0.23 + (i % 5) * 0.014, 0.48, 0.48 + (i % 4) * 0.06);
     } else if (gz > 120 && gx > 180) {
-      grassTint.setHSL(0.27 + (i % 4) * 0.012, 0.48, 0.45 + (i % 3) * 0.05);
+      grassTint.setHSL(0.27 + (i % 4) * 0.012, 0.5, 0.45 + (i % 3) * 0.05);
     } else {
-      grassTint.setHSL(0.29 + (i % 5) * 0.012, 0.44, 0.36 + (i % 4) * 0.05);
+      grassTint.setHSL(0.3 + (i % 5) * 0.012, 0.45, 0.36 + (i % 4) * 0.05);
     }
 
     grassSpots.push({
       x: gx,
-      y: py - 0.04, // sink root slightly into soil so zero floating gaps on slopes
+      y: py - 0.05, // sink root slightly into soil so zero floating gaps on slopes
       z: gz,
-      sx: 0.85 + (i % 5) * 0.16,
-      sy: 0.72 + (i % 6) * 0.15,
+      sx: 0.9 + (i % 5) * 0.18,
+      sy: 0.78 + (i % 6) * 0.17,
       yaw: (i * 1.13) % (Math.PI * 2),
       tint: grassTint.clone(),
     });
@@ -973,6 +1491,149 @@ export function buildRealFumaWorld(
     disposables.push(poleGeo, poleMat, lampGeo, lampMat);
   }
 
+  // 11b. Sunset Coast Whitewashed Concrete Seawall & Boardwalk Promenade Rail
+  const seawallMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.76,
+    metalness: 0.04,
+  });
+  const seawallStart = 0;
+  const seawallEnd = Math.floor(TRACK_STATION_COUNT * 0.245);
+  const seawallCount = seawallEnd - seawallStart;
+  if (seawallCount > 4) {
+    const wallVerts: number[] = [];
+    const wallIndices: number[] = [];
+    for (let i = 0; i <= seawallCount; i++) {
+      const st = TRACK_STATIONS[(seawallStart + i) % TRACK_STATION_COUNT];
+      const lat = -(st.roadWidth * 0.5 + 1.05);
+      const wx = st.x + st.rx * lat;
+      const wz = st.z + st.rz * lat;
+      const baseY = st.y + lat * Math.sin(st.bankRad);
+      // Inner top, outer top, outer bottom
+      wallVerts.push(wx - st.rx * 0.15, baseY + 0.52, wz - st.rz * 0.15);
+      wallVerts.push(wx + st.rx * 0.25, baseY + 0.52, wz + st.rz * 0.25);
+      wallVerts.push(wx + st.rx * 0.25, baseY - 1.6, wz + st.rz * 0.25);
+    }
+    for (let i = 0; i < seawallCount; i++) {
+      const a = i * 3;
+      const b = (i + 1) * 3;
+      wallIndices.push(a, a + 1, b, a + 1, b + 1, b);
+      wallIndices.push(a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
+    }
+    const wallGeo = new THREE.BufferGeometry();
+    wallGeo.setAttribute('position', new THREE.Float32BufferAttribute(wallVerts, 3));
+    wallGeo.setIndex(wallIndices);
+    wallGeo.computeVertexNormals();
+    const wallMesh = new THREE.Mesh(wallGeo, seawallMat);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
+    worldGroup.add(wallMesh);
+    disposables.push(wallGeo, seawallMat);
+
+    // Coastal wooden-look promenade fence posts & rails atop seawall
+    const fencePosts: Array<{ x: number; y: number; z: number; yaw: number }> = [];
+    for (let i = seawallStart; i < seawallEnd; i += 2) {
+      const st = TRACK_STATIONS[i];
+      const lat = -(st.roadWidth * 0.5 + 1.15);
+      fencePosts.push({
+        x: st.x + st.rx * lat,
+        y: st.y + lat * Math.sin(st.bankRad) + 0.52,
+        z: st.z + st.rz * lat,
+        yaw: Math.atan2(st.tx, st.tz),
+      });
+    }
+    if (fencePosts.length > 0) {
+      const fPostGeo = new THREE.BoxGeometry(0.14, 0.82, 0.14);
+      const fRailGeo = new THREE.BoxGeometry(0.08, 0.09, 5.5);
+      const fMat = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.78 });
+      const fPostInst = new THREE.InstancedMesh(fPostGeo, fMat, fencePosts.length);
+      const fRailInst = new THREE.InstancedMesh(fRailGeo, fMat, fencePosts.length * 2);
+      fPostInst.castShadow = true;
+      fRailInst.castShadow = true;
+      fencePosts.forEach((fp, idx) => {
+        dummy.position.set(fp.x, fp.y + 0.41, fp.z);
+        dummy.rotation.set(0, fp.yaw, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        fPostInst.setMatrixAt(idx, dummy.matrix);
+
+        dummy.position.set(fp.x, fp.y + 0.68, fp.z);
+        dummy.updateMatrix();
+        fRailInst.setMatrixAt(idx * 2, dummy.matrix);
+        dummy.position.set(fp.x, fp.y + 0.38, fp.z);
+        dummy.updateMatrix();
+        fRailInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+      });
+      fPostInst.instanceMatrix.needsUpdate = true;
+      fRailInst.instanceMatrix.needsUpdate = true;
+      fPostInst.computeBoundingSphere();
+      fRailInst.computeBoundingSphere();
+      worldGroup.add(fPostInst, fRailInst);
+      disposables.push(fPostGeo, fRailGeo, fMat);
+    }
+  }
+
+  // 11c. Colorful Resort Beach Umbrellas / Parasols along Sunset Coast & Terraces
+  const umbrellaSpots: Array<{ x: number; y: number; z: number; s: number; color: number }> = [];
+  const umbrellaColors = [0xec4899, 0xfb923c, 0x84cc16, 0x22d3ee, 0xfacc15, 0xc084fc, 0xf43f5e];
+  for (let i = 0; i < 72; i++) {
+    const isOceanSide = i < 52;
+    const s = isOceanSide
+      ? 0.008 + (i / 52) * 0.23
+      : 0.04 + ((i - 52) / 20) * 0.19;
+    const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
+    const side = isOceanSide ? -1 : 1;
+    const dist = isOceanSide
+      ? st.roadWidth * 0.5 + 3.2 + (i % 4) * 2.6
+      : st.roadWidth * 0.5 + 14.0 + (i % 3) * 4.5;
+    const ux = st.x + st.rx * (side * dist);
+    const uz = st.z + st.rz * (side * dist);
+    const proj = projectOntoTrack(ux, uz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 2.5) continue;
+    const uy = Math.max(-0.4, getTerrainHeight(ux, uz));
+    umbrellaSpots.push({
+      x: ux,
+      y: uy,
+      z: uz,
+      s: 0.92 + (i % 4) * 0.1,
+      color: umbrellaColors[i % umbrellaColors.length],
+    });
+  }
+  if (umbrellaSpots.length > 0) {
+    const uPoleGeo = new THREE.CylinderGeometry(0.055, 0.065, 2.7, 7);
+    const uPoleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.6, roughness: 0.35 });
+    const uCanopyGeo = new THREE.ConeGeometry(2.05, 0.72, 10);
+    const uCanopyMat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.04, side: THREE.DoubleSide });
+
+    const uPoleInst = new THREE.InstancedMesh(uPoleGeo, uPoleMat, umbrellaSpots.length);
+    const uCanopyInst = new THREE.InstancedMesh(uCanopyGeo, uCanopyMat, umbrellaSpots.length);
+    uPoleInst.castShadow = true;
+    uCanopyInst.castShadow = true;
+    uCanopyInst.receiveShadow = true;
+
+    umbrellaSpots.forEach((u, idx) => {
+      dummy.position.set(u.x, u.y + 1.32 * u.s, u.z);
+      dummy.rotation.set(0, idx * 0.65, 0);
+      dummy.scale.setScalar(u.s);
+      dummy.updateMatrix();
+      uPoleInst.setMatrixAt(idx, dummy.matrix);
+
+      dummy.position.set(u.x, u.y + 2.55 * u.s, u.z);
+      dummy.rotation.set((idx % 3 - 1) * 0.06, idx * 0.85, (idx % 2 === 0 ? 1 : -1) * 0.05);
+      dummy.scale.setScalar(u.s);
+      dummy.updateMatrix();
+      uCanopyInst.setMatrixAt(idx, dummy.matrix);
+      uCanopyInst.setColorAt(idx, new THREE.Color(u.color));
+    });
+    uPoleInst.instanceMatrix.needsUpdate = true;
+    uCanopyInst.instanceMatrix.needsUpdate = true;
+    if (uCanopyInst.instanceColor) uCanopyInst.instanceColor.needsUpdate = true;
+    uPoleInst.computeBoundingSphere();
+    uCanopyInst.computeBoundingSphere();
+    worldGroup.add(uPoleInst, uCanopyInst);
+    disposables.push(uPoleGeo, uPoleMat, uCanopyGeo, uCanopyMat);
+  }
+
   // 12. Active Race Checkpoint Gate Beacon
   const checkpointBeacon = new THREE.Group();
   const cpRingGeo = new THREE.CylinderGeometry(8.2, 8.2, 16, 28, 1, true);
@@ -996,8 +1657,8 @@ export function buildRealFumaWorld(
     checkpointBeacon,
     updateDynamicWorld: (timeSec, isWet, nightFactor = 0) => {
       windUniform.value = timeSec;
-      const targetRough = isWet ? 0.25 : 0.8;
-      const targetMetal = isWet ? 0.28 : 0.08;
+      const targetRough = isWet ? 0.22 : 0.68;
+      const targetMetal = isWet ? 0.3 : 0.1;
       asphaltRoadMat.roughness += (targetRough - asphaltRoadMat.roughness) * 0.08;
       asphaltRoadMat.metalness += (targetMetal - asphaltRoadMat.metalness) * 0.08;
 

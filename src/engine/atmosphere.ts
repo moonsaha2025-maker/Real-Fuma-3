@@ -52,30 +52,30 @@ interface SkyKeyframe {
 
 const SKY_KEYFRAMES: SkyKeyframe[] = [
   {
-    phase: 0.0, // Midnight (00:00)
-    top: '#020612',
-    mid: '#081329',
-    horizon: '#132242',
-    sunCol: '#cbd5e1',
-    hemiSky: '#1e3a8a',
-    hemiGround: '#080b12',
-    fog: '#0c162b',
-    oceanDeep: '#031324',
-    oceanShallow: '#0a2b46',
-    cloud: '#283548',
+    phase: 0.0, // Pitch-Dark Midnight (00:00)
+    top: '#000103',
+    mid: '#010308',
+    horizon: '#02050d',
+    sunCol: '#94a3b8',
+    hemiSky: '#050c1d',
+    hemiGround: '#010204',
+    fog: '#010206',
+    oceanDeep: '#010409',
+    oceanShallow: '#020b15',
+    cloud: '#050811',
   },
   {
     phase: 0.21, // Pre-dawn twilight (05:00)
-    top: '#0a1638',
-    mid: '#232e5c',
-    horizon: '#5b436e',
+    top: '#050b1c',
+    mid: '#121936',
+    horizon: '#352748',
     sunCol: '#f59e0b',
-    hemiSky: '#434c7d',
-    hemiGround: '#111622',
-    fog: '#2f3557',
-    oceanDeep: '#061d36',
-    oceanShallow: '#13415c',
-    cloud: '#64597a',
+    hemiSky: '#283259',
+    hemiGround: '#090c14',
+    fog: '#191d33',
+    oceanDeep: '#031121',
+    oceanShallow: '#0b293d',
+    cloud: '#3e3852',
   },
   {
     phase: 0.26, // Golden Sunrise (06:15)
@@ -92,28 +92,28 @@ const SKY_KEYFRAMES: SkyKeyframe[] = [
   },
   {
     phase: 0.35, // Crisp Morning (08:25)
-    top: '#0b52c9',
-    mid: '#38bdf8',
-    horizon: '#c2e9ff',
-    sunCol: '#fff8db',
-    hemiSky: '#bae6fd',
-    hemiGround: '#2d3d36',
-    fog: '#a5e1ff',
-    oceanDeep: '#0273b0',
-    oceanShallow: '#22c9bf',
+    top: '#0a61db',
+    mid: '#3ec7ff',
+    horizon: '#cff1ff',
+    sunCol: '#fffaf0',
+    hemiSky: '#c7ecff',
+    hemiGround: '#2f4036',
+    fog: '#b2e8ff',
+    oceanDeep: '#0280c7',
+    oceanShallow: '#2cead6',
     cloud: '#ffffff',
   },
   {
-    phase: 0.5, // Midday Sunlit (12:00)
-    top: '#0848b8',
-    mid: '#35b4f7',
-    horizon: '#bae6fd',
-    sunCol: '#fffdf0',
-    hemiSky: '#c9edff',
-    hemiGround: '#334239',
-    fog: '#a8e3ff',
-    oceanDeep: '#0277b5',
-    oceanShallow: '#26c9ba',
+    phase: 0.5, // Midday Sunlit Tropical Coastal (12:00)
+    top: '#0858d6',
+    mid: '#3ac2ff',
+    horizon: '#c9f0ff',
+    sunCol: '#fffef5',
+    hemiSky: '#d4f2ff',
+    hemiGround: '#344438',
+    fog: '#b5ebff',
+    oceanDeep: '#0284cc',
+    oceanShallow: '#30f0db',
     cloud: '#ffffff',
   },
   {
@@ -143,30 +143,30 @@ const SKY_KEYFRAMES: SkyKeyframe[] = [
     cloud: '#fdba74',
   },
   {
-    phase: 0.81, // Blue-Violet Dusk (19:25)
-    top: '#08122e',
-    mid: '#232854',
-    horizon: '#5e3c62',
+    phase: 0.81, // Deep Dusk (19:25)
+    top: '#030817',
+    mid: '#10142e',
+    horizon: '#30203a',
     sunCol: '#93c5fd',
-    hemiSky: '#3b4a7a',
-    hemiGround: '#10141f',
-    fog: '#262b4a',
-    oceanDeep: '#051a30',
-    oceanShallow: '#0e3752',
-    cloud: '#4b5563',
+    hemiSky: '#1c2647',
+    hemiGround: '#070910',
+    fog: '#111426',
+    oceanDeep: '#030e1c',
+    oceanShallow: '#082033',
+    cloud: '#282f40',
   },
   {
-    phase: 1.0, // Midnight Wrap (24:00)
-    top: '#020612',
-    mid: '#081329',
-    horizon: '#132242',
-    sunCol: '#cbd5e1',
-    hemiSky: '#1e3a8a',
-    hemiGround: '#080b12',
-    fog: '#0c162b',
-    oceanDeep: '#031324',
-    oceanShallow: '#0a2b46',
-    cloud: '#283548',
+    phase: 1.0, // Pitch-Dark Midnight Wrap (24:00)
+    top: '#000103',
+    mid: '#010308',
+    horizon: '#02050d',
+    sunCol: '#94a3b8',
+    hemiSky: '#050c1d',
+    hemiGround: '#010204',
+    fog: '#010206',
+    oceanDeep: '#010409',
+    oceanShallow: '#020b15',
+    cloud: '#050811',
   },
 ];
 
@@ -192,8 +192,8 @@ const _overcastOceanDeep = new THREE.Color('#0f3d52');
 const _overcastOceanShallow = new THREE.Color('#2b6b7a');
 const _overcastCloud = new THREE.Color('#94a3b8');
 const _overcastFog = new THREE.Color('#7c8b9e');
-const _nightOvercast = new THREE.Color('#111827');
-const _moonLightColor = new THREE.Color('#9ec3ff');
+const _nightOvercast = new THREE.Color('#020307');
+const _moonLightColor = new THREE.Color('#7fa8e8');
 const _sunTrueDir = new THREE.Vector3();
 const _moonDir = new THREE.Vector3();
 
@@ -263,10 +263,10 @@ export function createAtmosphereSystem(
         vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.22, h));
         col = mix(col, uTopColor, smoothstep(0.18, 0.82, h));
 
-        // Mie forward scattering near sun + crisp solar disc
+        // Mie forward scattering near sun + crisp radiant solar disc
         float sunAmt = max(dot(dir, normalize(uSunDir)), 0.0);
-        float halo = pow(sunAmt, 10.0) * 0.28 * uSunStrength;
-        float core = smoothstep(0.9986, 0.9997, sunAmt) * 1.15 * uSunStrength;
+        float halo = pow(sunAmt, 9.0) * 0.38 * uSunStrength + pow(sunAmt, 42.0) * 0.45 * uSunStrength;
+        float core = smoothstep(0.9984, 0.9997, sunAmt) * 1.45 * uSunStrength;
         col += uSunColor * (halo + core);
 
         // Cool nocturnal moon disc + atmospheric ring
@@ -521,31 +521,32 @@ export function createAtmosphereSystem(
         cloudMat.color.lerp(_overcastCloud, weatherMute);
       }
 
-      // Active directional shadow caster smoothly switches between Sun (day) and Moon (night)
+      // Active directional shadow caster smoothly switches between Sun (day) and faint Moon (night)
       const useMoon = rawSunY < 0.03;
       if (useMoon) {
         sunDirection.copy(_moonDir);
         state.keyColor.copy(_moonLightColor);
         const moonWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, -0.14);
-        state.keyIntensity = THREE.MathUtils.lerp(0.28, 0.62, moonWeight) * (1 - weatherMute * 0.45);
+        state.keyIntensity =
+          THREE.MathUtils.lerp(0.24, 0.095, moonWeight) * (1 - weatherMute * 0.55);
       } else {
         sunDirection.copy(_sunTrueDir);
         state.keyColor.copy(skyUniforms.uSunColor.value);
         const sunWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, 0.22);
         state.keyIntensity =
-          THREE.MathUtils.lerp(0.35, 1.72, sunWeight) * (1 - weatherMute * 0.45);
+          THREE.MathUtils.lerp(0.45, 2.08, sunWeight) * (1 - weatherMute * 0.42);
       }
 
       state.keyDirection.copy(sunDirection);
       state.sunElevation = rawSunY;
       state.nightFactor = nightFactor;
       state.hemiIntensity =
-        THREE.MathUtils.lerp(0.76, 0.42, nightFactor) * (1 - weatherMute * 0.15);
-      state.envIntensity = THREE.MathUtils.lerp(0.82, 0.24, nightFactor);
+        THREE.MathUtils.lerp(0.56, 0.028, nightFactor) * (1 - weatherMute * 0.15);
+      state.envIntensity = THREE.MathUtils.lerp(0.82, 0.032, nightFactor);
       state.exposure =
-        THREE.MathUtils.lerp(0.9, 0.96, nightFactor) - goldenBand * 0.06;
+        THREE.MathUtils.lerp(0.92, 0.72, nightFactor) - goldenBand * 0.05;
       state.bloomStrength = Math.max(
-        nightFactor * 0.18,
+        nightFactor * 0.3,
         goldenBand * 0.1,
       );
 
@@ -566,7 +567,7 @@ export function createAtmosphereSystem(
       skyUniforms.uSunStrength.value = dayVis * (1 - weatherMute * 0.85);
       skyUniforms.uMoonStrength.value = nightFactor * (1 - weatherMute * 0.88);
 
-      starMat.opacity = Math.max(0, (nightFactor - 0.18) / 0.82) * 0.92 * (1 - weatherMute * 0.95);
+      starMat.opacity = Math.max(0, (nightFactor - 0.14) / 0.86) * 0.96 * (1 - weatherMute * 0.95);
       starPoints.visible = starMat.opacity > 0.02;
 
       oceanUniforms.uSunDir.value.copy(useMoon ? _moonDir : _sunTrueDir);
@@ -574,10 +575,10 @@ export function createAtmosphereSystem(
         useMoon ? _moonLightColor : skyUniforms.uSunColor.value,
       );
       oceanUniforms.uSunStrength.value = useMoon
-        ? 0.42 * nightFactor * (1 - weatherMute * 0.8)
+        ? 0.22 * nightFactor * (1 - weatherMute * 0.8)
         : skyUniforms.uSunStrength.value;
 
-      cloudMat.opacity = THREE.MathUtils.lerp(0.76, 0.22, nightFactor) + weatherMute * 0.14;
+      cloudMat.opacity = THREE.MathUtils.lerp(0.88, 0.08, nightFactor) + weatherMute * 0.1;
 
       const maxCloudDist = Math.max(380, cameraFar * 0.68);
       for (let i = 0; i < cloudSprites.length; i++) {
