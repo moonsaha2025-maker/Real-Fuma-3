@@ -4,6 +4,13 @@ import { getRoadPointAt, TRACK_LENGTH_M } from '../data/track';
 import { CarModelRig, createCarModel } from './carModel';
 import { VehiclePhysicsState } from './physics';
 
+const _worldUp = new THREE.Vector3(0, 1, 0);
+const _roadTan = new THREE.Vector3();
+const _roadRight = new THREE.Vector3();
+const _roadNormal = new THREE.Vector3();
+const _qSurface = new THREE.Quaternion();
+const _qYaw = new THREE.Quaternion();
+
 export interface TrafficAgent {
   carRig: CarModelRig;
   s: number; // 0..1 spline progress
@@ -55,6 +62,7 @@ export class TrafficAndAIManager {
 
       const rig = createCarModel(spec, cust, {
         contactShadowMap: this.sharedContactShadow,
+        lightweight: true,
       });
       this.group.add(rig.root);
 
@@ -116,6 +124,7 @@ export class TrafficAndAIManager {
 
       const rig = createCarModel(spec, cust, {
         contactShadowMap: this.sharedContactShadow,
+        lightweight: true,
       });
 
       const lateral = (i % 2 === 0 ? -1 : 1) * 3.4;
@@ -155,8 +164,10 @@ export class TrafficAndAIManager {
     // 1. Update Free-Roam Sports Traffic (hidden during timed races for clean racing lines)
     const showTraffic = this.racers.length === 0;
     for (const t of this.traffic) {
-      t.carRig.root.visible = showTraffic;
-      if (!showTraffic) continue;
+      if (!showTraffic) {
+        t.carRig.root.visible = false;
+        continue;
+      }
 
       const distToPlayer = Math.hypot(player.x - t.x, player.z - t.z);
       const speedMod = distToPlayer < 16 ? 0.35 : 1.0;
@@ -168,10 +179,25 @@ export class TrafficAndAIManager {
       t.z = pt.z;
       t.heading = t.dir === 1 ? pt.heading : pt.heading + Math.PI;
 
-      t.carRig.root.position.set(t.x, t.y, t.z);
-      t.carRig.root.rotation.set(0, t.heading, 0);
-      t.carRig.setWheels(0, (t.speedMs * speedMod / 0.35) * dt);
-      t.carRig.setLights(headlightsOn, speedMod < 0.6, false);
+      const inRange = distToPlayer < 460;
+      t.carRig.root.visible = inRange;
+      if (inRange) {
+        t.carRig.root.position.set(t.x, t.y, t.z);
+
+        _roadTan.set(pt.tx, pt.ty, pt.tz).normalize();
+        const bankSin = Math.sin(pt.bankRad);
+        const bankCos = Math.cos(pt.bankRad);
+        _roadRight.set(pt.rx * bankCos, bankSin, pt.rz * bankCos).normalize();
+        _roadNormal.crossVectors(_roadRight, _roadTan).normalize();
+        if (_roadNormal.y < 0) _roadNormal.negate();
+
+        _qSurface.setFromUnitVectors(_worldUp, _roadNormal);
+        _qYaw.setFromAxisAngle(_worldUp, t.heading);
+        t.carRig.root.quaternion.copy(_qSurface).multiply(_qYaw);
+
+        t.carRig.setWheels(0, (t.speedMs * speedMod / 0.35) * dt);
+        t.carRig.setLights(headlightsOn, speedMod < 0.6, false);
+      }
 
       if (distToPlayer < 3.2) {
         const pdx = player.x - t.x;
@@ -215,7 +241,17 @@ export class TrafficAndAIManager {
       r.heading = pt.heading;
 
       r.carRig.root.position.set(r.x, r.y, r.z);
-      r.carRig.root.rotation.set(0, r.heading, 0);
+      _roadTan.set(pt.tx, pt.ty, pt.tz).normalize();
+      const bankSin = Math.sin(pt.bankRad);
+      const bankCos = Math.cos(pt.bankRad);
+      _roadRight.set(pt.rx * bankCos, bankSin, pt.rz * bankCos).normalize();
+      _roadNormal.crossVectors(_roadRight, _roadTan).normalize();
+      if (_roadNormal.y < 0) _roadNormal.negate();
+
+      _qSurface.setFromUnitVectors(_worldUp, _roadNormal);
+      _qYaw.setFromAxisAngle(_worldUp, r.heading);
+      r.carRig.root.quaternion.copy(_qSurface).multiply(_qYaw);
+
       r.carRig.setWheels(0, (r.speedMs / 0.35) * dt);
       r.carRig.setLights(headlightsOn, cornerSlow < 0.75, r.speedMs > 58);
 

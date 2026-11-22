@@ -87,38 +87,63 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   return (
     <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-2.5 md:p-4 touch-none-game">
-      {/* TOP BAR: Compact Translucent Radar Minimap + Race Status + 3 Minimal Edge Buttons */}
+      {/* TOP BAR: Compact Translucent Radar Minimap + Top-Left FPS Meter + Race Status + Edge Buttons */}
       <div className="flex items-start justify-between gap-2">
-        <div className="relative w-20 h-20 md:w-24 md:h-24 bg-black/35 border border-white/15 overflow-hidden">
-          <svg viewBox="-210 -210 420 420" className="w-full h-full">
-            <g
-              transform={`rotate(${
-                (telemetry.playerHeading * 180) / Math.PI
-              }) translate(${telemetry.playerX}, ${telemetry.playerZ})`}
-            >
-              <path
-                d={RADAR_LOOP_PATH}
-                fill="none"
-                stroke="#e2e8f0"
-                strokeOpacity={0.78}
-                strokeWidth={14}
-                strokeLinejoin="round"
-              />
-              {telemetry.opponents.map((op, i) => (
-                <circle
-                  key={i}
-                  cx={-op.x}
-                  cy={-op.z}
-                  r={10}
-                  fill="#f59e0b"
+        <div className="flex items-start gap-1.5">
+          <div className="relative w-20 h-20 md:w-24 md:h-24 bg-black/35 border border-white/15 overflow-hidden">
+            <svg viewBox="-210 -210 420 420" className="w-full h-full">
+              <g
+                transform={`rotate(${
+                  (telemetry.playerHeading * 180) / Math.PI
+                }) translate(${telemetry.playerX}, ${telemetry.playerZ})`}
+              >
+                <path
+                  d={RADAR_LOOP_PATH}
+                  fill="none"
+                  stroke="#e2e8f0"
+                  strokeOpacity={0.78}
+                  strokeWidth={14}
+                  strokeLinejoin="round"
                 />
-              ))}
-            </g>
-            {/* Player Direction Arrow */}
-            <polygon points="0,-14 9,11 0,6 -9,11" fill="#f43f5e" />
-          </svg>
-          <div className="absolute bottom-0 inset-x-0 bg-black/55 px-1.5 py-0.5 text-[8px] font-display tracking-wider text-white/90 truncate border-t border-white/10">
-            {telemetry.regionName}
+                {telemetry.opponents.map((op, i) => (
+                  <circle
+                    key={i}
+                    cx={-op.x}
+                    cy={-op.z}
+                    r={10}
+                    fill="#f59e0b"
+                  />
+                ))}
+              </g>
+              {/* Player Direction Arrow */}
+              <polygon points="0,-14 9,11 0,6 -9,11" fill="#f43f5e" />
+            </svg>
+            <div className="absolute bottom-0 inset-x-0 bg-black/55 px-1.5 py-0.5 text-[8px] font-display tracking-wider text-white/90 flex items-center justify-between gap-1 border-t border-white/10">
+              <span className="truncate">{telemetry.regionName}</span>
+              <span className="font-mono-num text-amber-300/90 tabular-nums shrink-0">
+                {telemetry.cycleTimeLabel}
+              </span>
+            </div>
+          </div>
+
+          <div
+            aria-label="Frame rate meter"
+            className="bg-black/45 border border-white/15 px-2 py-1 flex items-baseline gap-1"
+          >
+            <span
+              className={`font-mono-num text-xs font-bold tabular-nums leading-none ${
+                telemetry.fps >= 50
+                  ? 'text-emerald-400'
+                  : telemetry.fps >= 30
+                    ? 'text-amber-300'
+                    : 'text-rose-400'
+              }`}
+            >
+              {telemetry.fps}
+            </span>
+            <span className="text-[8px] font-display tracking-wider text-white/60">
+              FPS
+            </span>
           </div>
         </div>
 
@@ -288,9 +313,9 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         )}
 
-        {/* Bottom-Right: Compact Speedometer + Touch Pedals */}
+        {/* Bottom-Right: Compact Speedometer + Live NOS/Drift Readout + Touch Pedals */}
         <div className="flex items-end gap-1.5 ml-auto">
-          <div className="bg-black/35 border border-white/15 px-2.5 py-1.5 min-w-[78px] space-y-1">
+          <div className="bg-black/40 border border-white/15 px-2.5 py-1.5 min-w-[90px] space-y-1">
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-mono-num text-xl font-bold text-white leading-none tabular-nums">
                 {displaySpeed}
@@ -308,11 +333,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 style={{ width: `${Math.round(rpmPct * 100)}%` }}
               />
             </div>
-            <div className="h-[2px] bg-white/15">
+            <div className="h-[3px] bg-white/15 overflow-hidden">
               <div
-                className="h-full bg-sky-400/85"
+                className={`h-full ${telemetry.nitroActive ? 'bg-cyan-300' : 'bg-sky-400/85'}`}
                 style={{ width: `${Math.min(100, telemetry.nitro)}%` }}
               />
+            </div>
+            <div className="flex items-center justify-between text-[8px] font-display tracking-wider pt-0.5">
+              <span className={telemetry.nitroActive ? 'text-cyan-300 font-bold' : 'text-sky-300/75'}>
+                {telemetry.nitroActive ? 'NOS ACTIVE' : `NOS ${telemetry.nitro}%`}
+              </span>
+              {telemetry.driftAngleDeg > 10 && (
+                <span className="text-amber-300 font-mono-num font-bold tabular-nums">
+                  {telemetry.driftAngleDeg}°
+                </span>
+              )}
             </div>
           </div>
 

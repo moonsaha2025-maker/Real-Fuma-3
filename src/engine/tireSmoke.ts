@@ -193,7 +193,8 @@ export class TireSmokeSystem {
       weather === 'thunderstorm';
 
     const driftTriggered =
-      physics.driftAngleDeg > 15 && physics.speedKmh > 16;
+      (physics.driftAngleDeg > 15 && physics.speedKmh > 16) ||
+      (input.handbrake && physics.speedKmh > 20);
     const isBurnout =
       physics.surface === 'asphalt' &&
       input.throttle > 0.65 &&
@@ -205,7 +206,7 @@ export class TireSmokeSystem {
 
     if (physics.grounded && (driftTriggered || isBurnout || isOffroadSpray)) {
       const slipStrength = driftTriggered
-        ? Math.min(1, 0.35 + (physics.driftAngleDeg - 15) / 30)
+        ? Math.min(1, 0.42 + Math.max(0, physics.driftAngleDeg - 13) / 28)
         : isBurnout
           ? 0.85
           : Math.min(0.9, physics.speedKmh / 110);
@@ -365,15 +366,16 @@ export class TireSmokeSystem {
       this.positions[i3 + 1] += this.velocities[i3 + 1] * dt;
       this.positions[i3 + 2] += this.velocities[i3 + 2] * dt;
 
-      const progress = 1 - nextRem / this.maxLife[i];
+      const progress = Math.min(1, Math.max(0, 1 - nextRem / this.maxLife[i]));
+      const oneMinus = Math.max(0, 1 - progress);
       // Fast billowy expansion then gentle plateau
-      const expand = 1 - Math.pow(1 - progress, 2.2);
+      const expand = 1 - Math.pow(oneMinus, 2.2);
       this.sizes[i] =
         this.startSize[i] + (this.endSize[i] - this.startSize[i]) * expand;
 
       // Smooth fade-in over first 12% of life, soft fade-out over remainder
       const fadeIn = Math.min(1, progress / 0.12);
-      const fadeOut = Math.pow(1 - progress, 1.35);
+      const fadeOut = Math.pow(oneMinus, 1.35);
       this.alphas[i] = this.peakAlpha[i] * fadeIn * fadeOut;
       this.rotations[i] += this.spinVel[i] * dt;
     }

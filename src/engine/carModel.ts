@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CarBaseSpec, CarCustomization } from '../types/game';
 
 export interface CarModelRig {
@@ -10,8 +11,6 @@ export interface CarModelRig {
   bodyMaterial: THREE.MeshPhysicalMaterial;
   taillightMaterial: THREE.MeshStandardMaterial;
   headlightMaterial: THREE.MeshStandardMaterial;
-  headlightBeamLeft?: THREE.Mesh;
-  headlightBeamRight?: THREE.Mesh;
   nitroFlames: THREE.Mesh[];
   setLights: (headlights: boolean, braking: boolean, nitro: boolean) => void;
   setWheels: (steerRad: number, spinDeltaRad: number) => void;
@@ -258,8 +257,10 @@ function createWheelMesh(
   width: number,
   rimStyle: CarCustomization['rimStyle'],
   rimColor: string,
+  lightweight = false,
 ): THREE.Group {
   const wheelGroup = new THREE.Group();
+  const radialSegs = lightweight ? 14 : 24;
 
   const tireMat = new THREE.MeshStandardMaterial({
     color: 0x15171c,
@@ -271,26 +272,16 @@ function createWheelMesh(
     roughness: 0.18,
     metalness: 0.94,
   });
-  const rotorMat = new THREE.MeshStandardMaterial({
-    color: 0x64748b,
-    roughness: 0.34,
-    metalness: 0.85,
-  });
-  const caliperMat = new THREE.MeshStandardMaterial({
-    color: 0xe11d48,
-    roughness: 0.28,
-    metalness: 0.55,
-  });
 
   // Tire tread + rounded shoulder
-  const tireGeo = new THREE.CylinderGeometry(radius, radius, width, 28);
+  const tireGeo = new THREE.CylinderGeometry(radius, radius, width, radialSegs);
   tireGeo.rotateZ(Math.PI / 2);
   const tireMesh = new THREE.Mesh(tireGeo, tireMat);
-  tireMesh.castShadow = true;
+  tireMesh.castShadow = !lightweight;
   wheelGroup.add(tireMesh);
 
   const rimRadius = radius * 0.72;
-  const barrelGeo = new THREE.CylinderGeometry(rimRadius, rimRadius, width + 0.008, 24);
+  const barrelGeo = new THREE.CylinderGeometry(rimRadius, rimRadius, width + 0.008, radialSegs);
   barrelGeo.rotateZ(Math.PI / 2);
   wheelGroup.add(
     new THREE.Mesh(
@@ -299,43 +290,69 @@ function createWheelMesh(
     ),
   );
 
-  // Drilled Brake Disc
-  const rotorGeo = new THREE.CylinderGeometry(rimRadius * 0.76, rimRadius * 0.76, 0.045, 20);
-  rotorGeo.rotateZ(Math.PI / 2);
-  wheelGroup.add(new THREE.Mesh(rotorGeo, rotorMat));
-
-  // Alloy Spokes (5-spoke, 10-spoke GT mesh, or aero blade)
-  const spokeCount = rimStyle === 'mesh_gt' ? 10 : rimStyle === 'blade_aero' ? 6 : 5;
-  const spokeGeo = new THREE.BoxGeometry(0.03, rimRadius * 1.9, rimStyle === 'blade_aero' ? 0.075 : 0.036);
+  // Merge all alloy spokes, lips, and center hub into 1 draw call per wheel
+  const rimParts: THREE.BufferGeometry[] = [];
+  const spokeCount = lightweight ? 5 : rimStyle === 'mesh_gt' ? 10 : rimStyle === 'blade_aero' ? 6 : 5;
+  const spokeWidth = rimStyle === 'blade_aero' ? 0.075 : 0.036;
   for (let i = 0; i < spokeCount; i++) {
-    const spoke = new THREE.Mesh(spokeGeo, rimMat);
-    spoke.rotation.x = (i / spokeCount) * Math.PI;
-    spoke.position.x = width * 0.47;
-    wheelGroup.add(spoke);
+    const angle = (i / spokeCount) * Math.PI;
+    const sOut = new THREE.BoxGeometry(0.03, rimRadius * 1.9, spokeWidth);
+    sOut.rotateX(angle);
+    sOut.translate(width * 0.47, 0, 0);
+    rimParts.push(sOut);
 
-    const spokeInner = spoke.clone();
-    spokeInner.position.x = -width * 0.47;
-    wheelGroup.add(spokeInner);
+    if (!lightweight) {
+      const sIn = new THREE.BoxGeometry(0.03, rimRadius * 1.9, spokeWidth);
+      sIn.rotateX(angle);
+      sIn.translate(-width * 0.47, 0, 0);
+      rimParts.push(sIn);
+    }
   }
 
-  // Rim Outer Lip
-  const lipGeo = new THREE.TorusGeometry(rimRadius, 0.022, 8, 28);
-  lipGeo.rotateY(Math.PI / 2);
-  const lipL = new THREE.Mesh(lipGeo, rimMat);
-  lipL.position.x = width * 0.49;
-  const lipR = lipL.clone();
-  lipR.position.x = -width * 0.49;
-  wheelGroup.add(lipL, lipR);
+  const lipSegs = lightweight ? 14 : 24;
+  const lipL = new THREE.TorusGeometry(rimRadius, 0.022, 6, lipSegs);
+  lipL.rotateY(Math.PI / 2);
+  lipL.translate(width * 0.49, 0, 0);
+  rimParts.push(lipL);
 
-  // Hub & Brake Caliper
-  const hubGeo = new THREE.CylinderGeometry(radius * 0.15, radius * 0.15, width + 0.025, 12);
+  if (!lightweight) {
+    const lipR = new THREE.TorusGeometry(rimRadius, 0.022, 6, lipSegs);
+    lipR.rotateY(Math.PI / 2);
+    lipR.translate(-width * 0.49, 0, 0);
+    rimParts.push(lipR);
+  }
+
+  const hubGeo = new THREE.CylinderGeometry(radius * 0.15, radius * 0.15, width + 0.025, 10);
   hubGeo.rotateZ(Math.PI / 2);
-  wheelGroup.add(new THREE.Mesh(hubGeo, rimMat));
+  rimParts.push(hubGeo);
 
-  const caliperGeo = new THREE.BoxGeometry(width * 0.38, radius * 0.42, radius * 0.32);
-  const caliper = new THREE.Mesh(caliperGeo, caliperMat);
-  caliper.position.set(0, 0, radius * 0.34);
-  wheelGroup.add(caliper);
+  const mergedRimGeo = mergeGeometries(rimParts, false);
+  rimParts.forEach((g) => g.dispose());
+  if (mergedRimGeo) {
+    wheelGroup.add(new THREE.Mesh(mergedRimGeo, rimMat));
+  }
+
+  if (!lightweight) {
+    const rotorMat = new THREE.MeshStandardMaterial({
+      color: 0x64748b,
+      roughness: 0.34,
+      metalness: 0.85,
+    });
+    const caliperMat = new THREE.MeshStandardMaterial({
+      color: 0xe11d48,
+      roughness: 0.28,
+      metalness: 0.55,
+    });
+
+    const rotorGeo = new THREE.CylinderGeometry(rimRadius * 0.76, rimRadius * 0.76, 0.045, 16);
+    rotorGeo.rotateZ(Math.PI / 2);
+    wheelGroup.add(new THREE.Mesh(rotorGeo, rotorMat));
+
+    const caliperGeo = new THREE.BoxGeometry(width * 0.38, radius * 0.42, radius * 0.32);
+    const caliper = new THREE.Mesh(caliperGeo, caliperMat);
+    caliper.position.set(0, 0, radius * 0.34);
+    wheelGroup.add(caliper);
+  }
 
   return wheelGroup;
 }
@@ -346,9 +363,10 @@ export function createCarModel(
   options?: {
     contactShadowMap?: THREE.Texture;
     carbonMap?: THREE.Texture;
-    withLightCones?: boolean;
+    lightweight?: boolean;
   },
 ): CarModelRig {
+  const lightweight = Boolean(options?.lightweight);
   const root = new THREE.Group();
   const chassisGroup = new THREE.Group();
   root.add(chassisGroup);
@@ -399,7 +417,7 @@ export function createCarModel(
 
   // 1. Sculpted Lofted Main Coachwork Hull
   const hullMesh = new THREE.Mesh(buildLoftedHullGeometry(spec, widthScale), bodyMaterial);
-  hullMesh.castShadow = true;
+  hullMesh.castShadow = !lightweight;
   hullMesh.receiveShadow = true;
   chassisGroup.add(hullMesh);
 
@@ -408,7 +426,7 @@ export function createCarModel(
   chassisGroup.add(interiorCore);
 
   const canopyMesh = new THREE.Mesh(buildCanopyGeometry(spec, widthScale, 1.0), glassMat);
-  canopyMesh.castShadow = true;
+  canopyMesh.castShadow = !lightweight;
   chassisGroup.add(canopyMesh);
 
   const isHyper = spec.bodyStyle === 'hyper' || spec.bodyStyle === 'wedge';
@@ -416,7 +434,7 @@ export function createCarModel(
     buildContouredRoofGeometry(spec, widthScale),
     isHyper ? carbonMat : bodyMaterial,
   );
-  roofMesh.castShadow = true;
+  roofMesh.castShadow = !lightweight;
   chassisGroup.add(roofMesh);
 
   // Contoured A-pillars & Rear Flying Buttress C-pillars
@@ -568,13 +586,29 @@ export function createCarModel(
     }
   }
 
-  // 7. Exhaust Tips & Twin/Quad Nitro Flames
+  // 7. Exhaust Tips & Twin/Quad Dual-Core Additive Nitro Afterburners
   const exhaustMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95, roughness: 0.16 });
-  const flameMat = new THREE.MeshBasicMaterial({
-    color: 0x38bdf8,
+  const flameOuterGeo = new THREE.ConeGeometry(0.072, 0.78, 10, 1, true);
+  flameOuterGeo.translate(0, 0.39, 0); // Base anchored at y=0, tip extends +Y -> rotated to -Z rearward
+  const flameInnerGeo = new THREE.ConeGeometry(0.036, 0.48, 8);
+  flameInnerGeo.translate(0, 0.24, 0);
+
+  const flameOuterMat = new THREE.MeshBasicMaterial({
+    color: 0x0ea5e9,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.78,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
   });
+  const flameInnerMat = new THREE.MeshBasicMaterial({
+    color: 0xe0f2fe,
+    transparent: true,
+    opacity: 0.96,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
   const nitroFlames: THREE.Mesh[] = [];
   const exhaustOffsets =
     customization.exhaust === 'quad'
@@ -589,12 +623,16 @@ export function createCarModel(
     tip.position.set(ex, clearance + 0.14, -L * 0.505);
     chassisGroup.add(tip);
 
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.56, 8), flameMat);
-    flame.rotation.x = -Math.PI / 2;
-    flame.position.set(ex, clearance + 0.14, -L * 0.55 - 0.24);
-    flame.visible = false;
-    chassisGroup.add(flame);
-    nitroFlames.push(flame);
+    const outerFlame = new THREE.Mesh(flameOuterGeo, flameOuterMat);
+    outerFlame.rotation.x = -Math.PI / 2;
+    outerFlame.position.set(ex, clearance + 0.14, -L * 0.52);
+    outerFlame.visible = false;
+
+    const innerFlame = new THREE.Mesh(flameInnerGeo, flameInnerMat);
+    outerFlame.add(innerFlame);
+
+    chassisGroup.add(outerFlame);
+    nitroFlames.push(outerFlame);
   }
 
   // 8. Selective-Bloom-Safe Boomerang LED Headlights & High-Contrast Taillight Blades
@@ -647,29 +685,6 @@ export function createCarModel(
     chassisGroup.add(bladeTop, bladeBot);
   }
 
-  let headlightBeamLeft: THREE.Mesh | undefined;
-  let headlightBeamRight: THREE.Mesh | undefined;
-  if (options?.withLightCones) {
-    const beamGeo = new THREE.ConeGeometry(2.4, 20, 16, 1, true);
-    beamGeo.translate(0, -10, 0);
-    beamGeo.rotateX(-Math.PI / 2);
-    const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xe0f2fe,
-      transparent: true,
-      opacity: 0.08,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    });
-    headlightBeamLeft = new THREE.Mesh(beamGeo, beamMat);
-    headlightBeamLeft.position.set(-W * 0.33, clearance + H * 0.31, L * 0.49);
-    headlightBeamLeft.visible = false;
-    headlightBeamRight = new THREE.Mesh(beamGeo, beamMat);
-    headlightBeamRight.position.set(W * 0.33, clearance + H * 0.31, L * 0.49);
-    headlightBeamRight.visible = false;
-    chassisGroup.add(headlightBeamLeft, headlightBeamRight);
-  }
-
   // 9. Optional Underglow
   if (customization.neonColor !== 'none') {
     const neonMat = new THREE.MeshBasicMaterial({
@@ -704,21 +719,21 @@ export function createCarModel(
 
   const wheelSteerFL = new THREE.Group();
   wheelSteerFL.position.set(trackX, wheelR, frontZ);
-  const wheelFL = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor);
+  const wheelFL = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor, lightweight);
   wheelSteerFL.add(wheelFL);
   root.add(wheelSteerFL);
 
   const wheelSteerFR = new THREE.Group();
   wheelSteerFR.position.set(-trackX, wheelR, frontZ);
-  const wheelFR = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor);
+  const wheelFR = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor, lightweight);
   wheelSteerFR.add(wheelFR);
   root.add(wheelSteerFR);
 
-  const wheelRL = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor);
+  const wheelRL = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor, lightweight);
   wheelRL.position.set(trackX, wheelR, rearZ);
   root.add(wheelRL);
 
-  const wheelRR = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor);
+  const wheelRR = createWheelMesh(wheelR, wheelW, customization.rimStyle, customization.rimColor, lightweight);
   wheelRR.position.set(-trackX, wheelR, rearZ);
   root.add(wheelRR);
 
@@ -733,14 +748,10 @@ export function createCarModel(
     bodyMaterial,
     taillightMaterial,
     headlightMaterial,
-    headlightBeamLeft,
-    headlightBeamRight,
     nitroFlames,
     setLights: (headlights, braking, nitro) => {
       headlightMaterial.emissiveIntensity = headlights ? 1.65 : 0.95;
       taillightMaterial.emissiveIntensity = braking ? 2.15 : headlights ? 1.25 : 0.75;
-      if (headlightBeamLeft) headlightBeamLeft.visible = headlights;
-      if (headlightBeamRight) headlightBeamRight.visible = headlights;
       for (const f of nitroFlames) {
         f.visible = nitro;
         if (nitro) {

@@ -26,12 +26,15 @@ const TIME_CYCLE: TimeOfDay[] = ['day', 'sunset', 'night', 'sunrise'];
 interface PauseModalProps {
   weather: WeatherType;
   timeOfDay: TimeOfDay;
+  cycleTimeLabel: string;
+  autoDayNightCycle: boolean;
   headlightsOn: boolean;
   onResume: () => void;
   onRestart: () => void;
   onOpenMap: () => void;
   onOpenSettings: () => void;
   onCycleWeather: (w: WeatherType, t: TimeOfDay) => void;
+  onToggleDayNightCycle: () => void;
   onToggleHeadlights: () => void;
   onResetCar: () => void;
   onExitToMenu: () => void;
@@ -40,12 +43,15 @@ interface PauseModalProps {
 export const PauseModal: React.FC<PauseModalProps> = ({
   weather,
   timeOfDay,
+  cycleTimeLabel,
+  autoDayNightCycle,
   headlightsOn,
   onResume,
   onRestart,
   onOpenMap,
   onOpenSettings,
   onCycleWeather,
+  onToggleDayNightCycle,
   onToggleHeadlights,
   onResetCar,
   onExitToMenu,
@@ -62,13 +68,23 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   return (
     <div className="fixed inset-0 z-40 bg-[#07080b]/85 flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-[#0d1017] border border-slate-700 p-6 space-y-4 shadow-2xl">
-        <div className="border-b border-slate-800 pb-3">
-          <div className="text-[10px] font-display tracking-[0.28em] text-rose-500">
-            SIMULATION PAUSED
+        <div className="border-b border-slate-800 pb-3 flex items-end justify-between">
+          <div>
+            <div className="text-[10px] font-display tracking-[0.28em] text-rose-500">
+              SIMULATION PAUSED
+            </div>
+            <h2 className="font-display text-2xl font-bold text-slate-100">
+              REAL FUMA
+            </h2>
           </div>
-          <h2 className="font-display text-2xl font-bold text-slate-100">
-            REAL FUMA
-          </h2>
+          <div className="text-right tabular-nums">
+            <div className="text-[9px] font-display tracking-widest text-slate-500">
+              WORLD TIME
+            </div>
+            <div className="font-mono-num text-sm font-bold text-amber-300">
+              {cycleTimeLabel}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -91,6 +107,16 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           >
             <Sun className="w-3.5 h-3.5 text-amber-400" />
             {timeOfDay}
+          </button>
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              onToggleDayNightCycle();
+            }}
+            className="col-span-2 flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-display text-[10px] uppercase py-2 cursor-pointer"
+          >
+            <Sun className={`w-3.5 h-3.5 ${autoDayNightCycle ? 'text-emerald-400' : 'text-slate-500'}`} />
+            DAY/NIGHT CYCLE: {autoDayNightCycle ? 'AUTO' : 'LOCKED'}
           </button>
           <button
             onClick={() => {

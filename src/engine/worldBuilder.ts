@@ -14,7 +14,11 @@ export interface BuiltWorld {
   worldGroup: THREE.Group;
   asphaltRoadMat: THREE.MeshStandardMaterial;
   checkpointBeacon: THREE.Group;
-  updateDynamicWorld: (timeSec: number, isWet: boolean) => void;
+  updateDynamicWorld: (
+    timeSec: number,
+    isWet: boolean,
+    nightFactor?: number,
+  ) => void;
   dispose: () => void;
 }
 
@@ -60,14 +64,191 @@ function buildContinuousRibbonGeometry(
   return geo;
 }
 
+// Build arched 3D botanical palm frond geometry extending along +Z with downward droop & V-fold
+function buildArchedPalmFrondGeometry(): THREE.BufferGeometry {
+  const widthSegs = 2;
+  const lenSegs = 7;
+  const width = 1.9;
+  const length = 4.9;
+  const geo = new THREE.PlaneGeometry(width, length, widthSegs, lenSegs);
+  // Rotate PlaneGeometry (XY -> XZ) so length goes along +Z (v=1 at tip, v=0 at base)
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, 0, length * 0.5);
+
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const t = Math.max(0, Math.min(1, z / length));
+    // Graceful parabolic botanical arch + slight V-fold away from central rachis
+    const archY = Math.sin(t * Math.PI * 0.65) * 0.42 - t * t * 1.65;
+    const vFold = -Math.abs(x) * 0.16;
+    pos.setY(i, archY + vFold);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Build 3-blade radiating conifer bough star geometry for natural pine silhouette & dappled shadows
+function buildPineTierGeometry(): THREE.BufferGeometry {
+  const planes = 4;
+  const width = 2.4;
+  const height = 1.65;
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let p = 0; p < planes; p++) {
+    const yaw = (p / planes) * Math.PI * 2;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    // Slightly tilted outward bough fan
+    const baseIdx = p * 4;
+    const hw = width * 0.5;
+
+    // 4 corners: bottom-left, bottom-right, top-left, top-right (apex narrowed slightly)
+    const localPts: Array<[number, number, number, number, number]> = [
+      [-hw * 0.55, 0.0, 0.35, 0, 0],
+      [hw * 0.55, 0.0, 0.35, 1, 0],
+      [-hw * 0.45, height, -0.35, 0, 1],
+      [hw * 0.45, height, -0.35, 1, 1],
+    ];
+
+    for (const [lx, ly, lz, u, v] of localPts) {
+      const wx = lx * cosY + lz * sinY;
+      const wz = -lx * sinY + lz * cosY;
+      verts.push(wx, ly, wz);
+      uvs.push(u, v);
+    }
+    indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
+    indices.push(baseIdx + 1, baseIdx + 3, baseIdx + 2);
+  }
+
+  // Add subtle top skirt cone-like angled caps for fullness when viewed from above
+  const capOffset = planes * 4;
+  for (let q = 0; q < 2; q++) {
+    const yaw = q * (Math.PI / 2) + Math.PI / 4;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const hw = width * 0.52;
+    const pts: Array<[number, number, number, number, number]> = [
+      [-hw, 0.28, -hw * 0.42, 0, 0],
+      [hw, 0.28, -hw * 0.42, 1, 0],
+      [-hw * 0.72, 0.85, hw * 0.42, 0, 1],
+      [hw * 0.72, 0.85, hw * 0.42, 1, 1],
+    ];
+    const b = capOffset + q * 4;
+    for (const [lx, ly, lz, u, v] of pts) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(b, b + 1, b + 2);
+    indices.push(b + 1, b + 3, b + 2);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Build crossed 3-card tapered grass tuft geometry anchored cleanly at y=0
+function buildGrassTuftGeometry(): THREE.BufferGeometry {
+  const blades = 3;
+  const w = 1.15;
+  const h = 0.82;
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let b = 0; b < blades; b++) {
+    const yaw = (b / blades) * Math.PI;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const hw = w * 0.5;
+    const base = b * 4;
+
+    // Slight outward lean at top for volume from overhead chase camera
+    const lean = (b % 2 === 0 ? 1 : -1) * 0.14;
+    const corners: Array<[number, number, number, number, number]> = [
+      [-hw, 0, 0, 0, 0],
+      [hw, 0, 0, 1, 0],
+      [-hw * 1.06, h, lean, 0, 1],
+      [hw * 1.06, h, lean, 1, 1],
+    ];
+    for (const [lx, ly, lz, u, v] of corners) {
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(u, v);
+    }
+    indices.push(base, base + 1, base + 2);
+    indices.push(base + 1, base + 3, base + 2);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function attachWindSway(
+  material: THREE.MeshStandardMaterial,
+  windUniform: { value: number },
+  mode: 'grass' | 'palm' | 'pine',
+): void {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uWindTime = windUniform;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+         uniform float uWindTime;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         {
+           #ifdef USE_INSTANCING
+             vec4 wOrigin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+             float phase = wOrigin.x * 0.13 + wOrigin.z * 0.11 + uWindTime * 2.05;
+           #else
+             float phase = uWindTime * 2.05;
+           #endif
+           ${
+             mode === 'grass'
+               ? `float w = clamp(transformed.y / 0.82, 0.0, 1.0);
+                  float sway = (sin(phase) * 0.14 + sin(phase * 2.3 + 0.9) * 0.045) * w * w;
+                  transformed.x += sway;
+                  transformed.z += cos(phase * 0.85) * 0.075 * w * w;`
+               : mode === 'palm'
+                 ? `float w = clamp(transformed.z / 4.9, 0.0, 1.0);
+                    float sway = (sin(phase * 0.72) * 0.24 + cos(phase * 1.45) * 0.08) * w * w;
+                    transformed.y += sway * 0.7;
+                    transformed.x += sway * 0.45;`
+                 : `float w = clamp(length(transformed.xz) / 1.35, 0.0, 1.0);
+                    float sway = sin(phase * 0.65) * 0.08 * w;
+                    transformed.x += sway;
+                    transformed.z += cos(phase * 0.55) * 0.06 * w;`
+           }
+         }`,
+      );
+  };
+  material.customProgramCacheKey = () => `wind_${mode}`;
+}
+
 export function buildRealFumaWorld(
   textures: ProceduralTexturePack,
 ): BuiltWorld {
   const worldGroup = new THREE.Group();
   const disposables: Array<{ dispose: () => void }> = [];
   const dummy = new THREE.Object3D();
+  const windUniform = { value: 0 };
 
-  // 1. High-Density Road-Carved Peninsula Terrain (~7m grid resolution)
+  // 1. High-Density Road-Carved Peninsula Terrain (~7m grid resolution + normal relief)
   const terrainSize = WORLD_HALF_SIZE * 2;
   const segs = 250;
   const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segs, segs);
@@ -97,7 +278,10 @@ export function buildRealFumaWorld(
       tmpColor.set('#447838');
       if (slope > 0.16 || y > 13) {
         rockColor.set('#967a58');
-        tmpColor.lerp(rockColor, Math.min(0.92, (slope - 0.11) * 2.8 + Math.max(0, y - 13) * 0.05));
+        tmpColor.lerp(
+          rockColor,
+          Math.min(0.92, (slope - 0.11) * 2.8 + Math.max(0, y - 13) * 0.05),
+        );
       }
     } else if (z > 120 && x > 180) {
       // Fujimi Harbor green coastal promenade
@@ -111,7 +295,10 @@ export function buildRealFumaWorld(
       tmpColor.set('#2c5231');
       if (slope > 0.17 || y > 31) {
         rockColor.set('#5a626b');
-        tmpColor.lerp(rockColor, Math.min(0.88, (slope - 0.13) * 2.5 + Math.max(0, y - 31) * 0.05));
+        tmpColor.lerp(
+          rockColor,
+          Math.min(0.88, (slope - 0.13) * 2.5 + Math.max(0, y - 31) * 0.05),
+        );
       }
     }
 
@@ -125,7 +312,9 @@ export function buildRealFumaWorld(
   const terrainMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     map: textures.terrainDetailMap,
-    roughness: 0.92,
+    normalMap: textures.terrainNormalMap,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughness: 0.9,
     metalness: 0.02,
   });
   const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
@@ -133,13 +322,15 @@ export function buildRealFumaWorld(
   worldGroup.add(terrainMesh);
   disposables.push(terrainGeo, terrainMat);
 
-  // 2. Seamless Closed-Loop 720-Station Asphalt Ribbon + Thick Roadbed Side Skirts
+  // 2. Seamless Closed-Loop 720-Station Asphalt Ribbon + PBR Normal & Roughness Maps
   const asphaltRoadMat = new THREE.MeshStandardMaterial({
     map: textures.asphaltMap,
-    bumpMap: textures.asphaltBumpMap,
-    bumpScale: 0.04,
-    roughness: 0.58,
+    normalMap: textures.asphaltNormalMap,
+    normalScale: new THREE.Vector2(0.75, 0.75),
+    roughnessMap: textures.asphaltRoughnessMap,
+    roughness: 0.8,
     metalness: 0.08,
+    envMapIntensity: 0.78,
   });
   const shoulderSkirtMat = new THREE.MeshStandardMaterial({
     map: textures.concreteCurbMap,
@@ -147,56 +338,6 @@ export function buildRealFumaWorld(
     roughness: 0.85,
     metalness: 0.08,
   });
-
-  // 4 columns across road: Left edge skirt bottom -> Left deck edge -> Right deck edge -> Right edge skirt bottom
-  const roadGeo = buildContinuousRibbonGeometry(
-    TRACK_STATION_COUNT,
-    (idx, col) => {
-      const st = TRACK_STATIONS[idx];
-      const hw = st.roadWidth * 0.5;
-      const sSinB = Math.sin(st.bankRad);
-      const vCoord = (idx / TRACK_STATION_COUNT) * (TRACK_LENGTH_M / 18);
-
-      if (col === 0) {
-        // Left skirt drop into terrain/bridge soffit
-        return {
-          x: st.x - st.rx * (hw + 0.7),
-          y: st.y - hw * sSinB - 0.65,
-          z: st.z - st.rz * (hw + 0.7),
-          u: 0,
-          v: vCoord,
-        };
-      }
-      if (col === 1) {
-        return {
-          x: st.x - st.rx * hw,
-          y: st.y - hw * sSinB,
-          z: st.z - st.rz * hw,
-          u: 0,
-          v: vCoord,
-        };
-      }
-      if (col === 2) {
-        return {
-          x: st.x + st.rx * hw,
-          y: st.y + hw * sSinB,
-          z: st.z + st.rz * hw,
-          u: 1,
-          v: vCoord,
-        };
-      }
-      return {
-        x: st.x + st.rx * (hw + 0.7),
-        y: st.y + hw * sSinB - 0.65,
-        z: st.z + st.rz * (hw + 0.7),
-        u: 1,
-        v: vCoord,
-      };
-    },
-    4,
-  );
-  // Build clean UV-mapped deck only (cols 1..2) + concrete shoulder apron separately so UVs align strictly 0..1 across asphalt!
-  roadGeo.dispose();
 
   const deckGeo = buildContinuousRibbonGeometry(
     TRACK_STATION_COUNT,
@@ -238,8 +379,7 @@ export function buildRealFumaWorld(
           return { x: st.x + st.rx * lat, y: st.y + lat * sSinB + dy, z: st.z + st.rz * lat, u: 0, v };
         }
         if (col === 1) {
-          const lat = side === -1 ? outerLat : outerLat;
-          return { x: st.x + st.rx * lat, y: st.y + lat * sSinB + 0.04, z: st.z + st.rz * lat, u: 0.5, v };
+          return { x: st.x + st.rx * outerLat, y: st.y + outerLat * sSinB + 0.04, z: st.z + st.rz * outerLat, u: 0.5, v };
         }
         const lat = side === -1 ? innerLat : dropLat;
         const dy = side === -1 ? -0.02 : -0.75;
@@ -268,7 +408,7 @@ export function buildRealFumaWorld(
         const active = side === -1 ? st.hasCurbLeft : st.hasCurbRight;
         const hw = st.roadWidth * 0.5;
         const lat = side * (hw - (col === 0 ? 0.65 : -0.15));
-        const yOff = active ? 0.055 : -0.55; // Tuck smoothly out of sight on straights
+        const yOff = active ? 0.055 : -0.55;
         return {
           x: st.x + st.rx * lat,
           y: st.y + lat * Math.sin(st.bankRad) + yOff,
@@ -318,7 +458,6 @@ export function buildRealFumaWorld(
     disposables.push(railGeo);
   }
 
-  // Guardrail I-Beam Posts every 3 stations (~15m)
   const postStep = 3;
   const postCount = Math.floor(TRACK_STATION_COUNT / postStep) * 2;
   const postGeo = new THREE.BoxGeometry(0.16, 0.92, 0.16);
@@ -329,6 +468,7 @@ export function buildRealFumaWorld(
   });
   const postInst = new THREE.InstancedMesh(postGeo, postMat, postCount);
   postInst.castShadow = true;
+  postInst.receiveShadow = true;
   let pIdx = 0;
   for (let i = 0; i < TRACK_STATION_COUNT; i += postStep) {
     const st = TRACK_STATIONS[i];
@@ -375,16 +515,18 @@ export function buildRealFumaWorld(
       const leg = new THREE.Mesh(towerGeo, bridgeConcreteMat);
       leg.position.set(side * 10.6, pt.y + 15, 0);
       leg.castShadow = true;
+      leg.receiveShadow = true;
       pylonGroup.add(leg);
     }
     const topCross = new THREE.Mesh(new THREE.BoxGeometry(23.5, 2.6, 2.6), bridgeAccentMat);
     topCross.position.set(0, pt.y + 39, 0);
+    topCross.castShadow = true;
     const midCross = new THREE.Mesh(new THREE.BoxGeometry(22.5, 2.0, 2.2), bridgeConcreteMat);
     midCross.position.set(0, pt.y + 23, 0);
+    midCross.castShadow = true;
     pylonGroup.add(topCross, midCross);
     worldGroup.add(pylonGroup);
 
-    // Stay cables fanning down to bridge edge
     const cablePts: number[] = [];
     for (let c = -5; c <= 5; c++) {
       if (c === 0) continue;
@@ -421,12 +563,13 @@ export function buildRealFumaWorld(
     const arch = new THREE.Mesh(tunnelArchGeo, tunnelArchMat);
     arch.position.set(st.x, st.y - 0.5, st.z);
     arch.rotation.y = Math.atan2(st.tx, st.tz);
+    arch.castShadow = true;
     arch.receiveShadow = true;
     worldGroup.add(arch);
   }
   disposables.push(tunnelArchGeo, tunnelArchMat);
 
-  // 7. Sleek Multi-Tiered Fujimi Harbor Glass Towers (Overlooking the Bay, clear of track)
+  // 7. Sleek Multi-Tiered Fujimi Harbor Glass Towers (with nocturnal emissive window glow)
   const bldgSpecs: Array<{ x: number; z: number; w: number; d: number; h: number }> = [
     { x: 245, z: 220, w: 34, d: 34, h: 118 },
     { x: 300, z: 185, w: 30, d: 28, h: 96 },
@@ -448,6 +591,9 @@ export function buildRealFumaWorld(
   const shaftMat = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
     map: textures.buildingFacadeMap,
+    emissive: 0xffdfad,
+    emissiveMap: textures.buildingEmissiveMap,
+    emissiveIntensity: 0.05,
     roughness: 0.22,
     metalness: 0.65,
     clearcoat: 0.35,
@@ -499,119 +645,284 @@ export function buildRealFumaWorld(
   shaftInst.instanceMatrix.needsUpdate = true;
   if (shaftInst.instanceColor) shaftInst.instanceColor.needsUpdate = true;
   crownInst.instanceMatrix.needsUpdate = true;
+  podiumInst.computeBoundingSphere();
+  shaftInst.computeBoundingSphere();
+  crownInst.computeBoundingSphere();
   worldGroup.add(podiumInst, shaftInst, crownInst);
   disposables.push(podiumGeo, podiumMat, shaftGeo, shaftMat, crownGeo, crownMat);
 
-  // 8. Roadside Coastal Palms (Sunset Coast & Palm Canyon) — Strictly off road corridor
+  // 8. Sculpted Roadside Coastal Palms (Textured Bark + Normal + Feathered Alpha-Cutout Fronds + Wind Sway)
   const palmSpots: Array<{ x: number; y: number; z: number; s: number; lean: number }> = [];
-  for (let i = 0; i < 68; i++) {
-    const s = 0.015 + (i / 68) * 0.42;
+  for (let i = 0; i < 82; i++) {
+    const s = 0.012 + (i / 82) * 0.43;
     const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
     const side = i % 2 === 0 ? -1 : 1;
-    const dist = st.roadWidth * 0.5 + 8.5 + (i % 4) * 5.2;
+    const dist = st.roadWidth * 0.5 + 8.0 + (i % 5) * 4.8;
     const px = st.x + st.rx * (side * dist);
     const pz = st.z + st.rz * (side * dist);
     const proj = projectOntoTrack(px, pz);
-    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 4.5) continue;
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 4.2) continue;
     const py = getTerrainHeight(px, pz);
-    if (py < 0.2) continue;
-    palmSpots.push({ x: px, y: py, z: pz, s: 0.88 + (i % 5) * 0.12, lean: side * 0.14 });
+    if (py < 0.25) continue;
+    palmSpots.push({ x: px, y: py, z: pz, s: 0.86 + (i % 5) * 0.12, lean: side * (0.12 + (i % 3) * 0.03) });
   }
   if (palmSpots.length > 0) {
-    const pTrunkGeo = new THREE.CylinderGeometry(0.22, 0.44, 10.5, 8);
-    const pTrunkMat = new THREE.MeshStandardMaterial({ map: textures.barkMap, color: 0x9c7b56, roughness: 0.92 });
-    const frondGeo = new THREE.BoxGeometry(0.66, 0.08, 4.6);
-    frondGeo.translate(0, 0, 2.2);
-    const frondMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.68 });
+    // Organic curved tapered trunk
+    const pTrunkGeo = new THREE.CylinderGeometry(0.19, 0.43, 10.6, 10, 5);
+    const ptPos = pTrunkGeo.attributes.position;
+    for (let i = 0; i < ptPos.count; i++) {
+      const py = ptPos.getY(i); // -5.3..5.3
+      const t = Math.max(0, Math.min(1, (py + 5.3) / 10.6));
+      ptPos.setX(i, ptPos.getX(i) + Math.pow(t, 1.8) * 0.65);
+    }
+    ptPos.needsUpdate = true;
+    pTrunkGeo.computeVertexNormals();
+    pTrunkGeo.computeBoundingSphere();
 
-    const frondsPerTree = 9;
+    const pTrunkMat = new THREE.MeshStandardMaterial({
+      map: textures.barkMap,
+      normalMap: textures.barkNormalMap,
+      normalScale: new THREE.Vector2(1.2, 1.2),
+      color: 0xa68663,
+      roughness: 0.9,
+    });
+
+    const frondGeo = buildArchedPalmFrondGeometry();
+    const frondMat = new THREE.MeshStandardMaterial({
+      map: textures.palmFrondMap,
+      alphaTest: 0.4,
+      side: THREE.DoubleSide,
+      roughness: 0.62,
+      metalness: 0.02,
+    });
+    attachWindSway(frondMat, windUniform, 'palm');
+
+    const coconutGeo = new THREE.SphereGeometry(0.24, 7, 6);
+    const coconutMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.85 });
+
+    const frondsPerTree = 11;
     const pTrunkInst = new THREE.InstancedMesh(pTrunkGeo, pTrunkMat, palmSpots.length);
     const pFrondInst = new THREE.InstancedMesh(frondGeo, frondMat, palmSpots.length * frondsPerTree);
+    const cocoInst = new THREE.InstancedMesh(coconutGeo, coconutMat, palmSpots.length * 3);
     pTrunkInst.castShadow = true;
+    pTrunkInst.receiveShadow = true;
     pFrondInst.castShadow = true;
+    pFrondInst.receiveShadow = true;
 
     let fIdx = 0;
+    let cocoIdx = 0;
     palmSpots.forEach((p, idx) => {
-      const topX = p.x + Math.sin(p.lean) * 1.4;
+      const yawTree = idx * 0.72;
+      const topX = p.x + Math.cos(-yawTree) * 0.65 * p.s + Math.sin(p.lean) * 1.15;
+      const topZ = p.z + Math.sin(-yawTree) * 0.65 * p.s;
       const topY = p.y + 10.2 * p.s;
-      dummy.position.set((p.x + topX) * 0.5, p.y + 5.1 * p.s, p.z);
-      dummy.rotation.set(0, idx * 0.4, -p.lean);
+
+      dummy.position.set(p.x, p.y + 5.1 * p.s, p.z);
+      dummy.rotation.set(0, yawTree, -p.lean * 0.75);
       dummy.scale.set(p.s, p.s, p.s);
       dummy.updateMatrix();
       pTrunkInst.setMatrixAt(idx, dummy.matrix);
 
+      // Coconut cluster under fronds
+      for (let c = 0; c < 3; c++) {
+        const ca = (c / 3) * Math.PI * 2 + idx;
+        dummy.position.set(topX + Math.cos(ca) * 0.25, topY - 0.35, topZ + Math.sin(ca) * 0.25);
+        dummy.rotation.set(0, ca, 0);
+        dummy.scale.setScalar(p.s);
+        dummy.updateMatrix();
+        cocoInst.setMatrixAt(cocoIdx++, dummy.matrix);
+      }
+
       for (let f = 0; f < frondsPerTree; f++) {
-        const yaw = (f / frondsPerTree) * Math.PI * 2 + idx * 0.5;
-        dummy.position.set(topX, topY, p.z);
-        dummy.rotation.set(0.24 + (f % 3) * 0.16, yaw, 0, 'YXZ');
-        dummy.scale.set(p.s, p.s, p.s);
+        const tier = f < 5 ? 0 : 1; // upper & lower crown ring
+        const yaw = (f / frondsPerTree) * Math.PI * 2 + idx * 0.55;
+        const pitch = tier === 0 ? -0.18 + (f % 2) * 0.12 : 0.14 + (f % 3) * 0.1;
+        dummy.position.set(topX, topY - tier * 0.18, topZ);
+        dummy.rotation.set(pitch, yaw, 0, 'YXZ');
+        const fs = p.s * (tier === 0 ? 0.88 : 1.04);
+        dummy.scale.set(fs, fs, fs);
         dummy.updateMatrix();
         pFrondInst.setMatrixAt(fIdx, dummy.matrix);
-        pFrondInst.setColorAt(fIdx, new THREE.Color().setHSL(0.28 + (f % 3) * 0.02, 0.58, 0.25 + (f % 2) * 0.06));
+        pFrondInst.setColorAt(
+          fIdx,
+          new THREE.Color().setHSL(0.26 + (f % 3) * 0.018, 0.52, 0.56 + (f % 2) * 0.12),
+        );
         fIdx++;
       }
     });
     pTrunkInst.instanceMatrix.needsUpdate = true;
     pFrondInst.instanceMatrix.needsUpdate = true;
+    cocoInst.instanceMatrix.needsUpdate = true;
     if (pFrondInst.instanceColor) pFrondInst.instanceColor.needsUpdate = true;
-    worldGroup.add(pTrunkInst, pFrondInst);
-    disposables.push(pTrunkGeo, pTrunkMat, frondGeo, frondMat);
+    pTrunkInst.computeBoundingSphere();
+    pFrondInst.computeBoundingSphere();
+    cocoInst.computeBoundingSphere();
+    worldGroup.add(pTrunkInst, pFrondInst, cocoInst);
+    disposables.push(pTrunkGeo, pTrunkMat, frondGeo, frondMat, coconutGeo, coconutMat);
   }
 
-  // 9. Alpine Conifer Pine Groves (Alpine Pass & Canyon Slopes)
+  // 9. Alpine Conifer Pine Groves (Textured Bark + Alpha-Cutout Needle Boughs + Dappled Shadows)
   const pineSpots: Array<{ x: number; y: number; z: number; s: number }> = [];
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < 260; i++) {
     const angle = i * 2.39996;
-    const rad = 60 + (i % 55) * 9.5;
+    const rad = 58 + (i % 58) * 9.5;
     const px = 220 + Math.cos(angle) * rad;
     const pz = -260 + Math.sin(angle) * rad;
     const proj = projectOntoTrack(px, pz);
-    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 11) continue;
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 10.5) continue;
     const py = getTerrainHeight(px, pz);
-    if (py < 2.5 || py > 52) continue;
+    if (py < 2.2 || py > 50) continue;
     pineSpots.push({ x: px, y: py, z: pz, s: 0.9 + (i % 5) * 0.16 });
   }
   if (pineSpots.length > 0) {
-    const trunkGeo = new THREE.CylinderGeometry(0.22, 0.42, 4.5, 6);
-    const trunkMat = new THREE.MeshStandardMaterial({ map: textures.barkMap, color: 0x5c3e2a, roughness: 0.94 });
-    const coneGeo = new THREE.ConeGeometry(1, 1, 7);
-    const foliageMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88 });
+    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.45, 7.6, 8);
+    const trunkMat = new THREE.MeshStandardMaterial({
+      map: textures.barkMap,
+      normalMap: textures.barkNormalMap,
+      normalScale: new THREE.Vector2(1.3, 1.3),
+      color: 0x6b4b34,
+      roughness: 0.94,
+    });
+    const boughGeo = buildPineTierGeometry();
+    const foliageMat = new THREE.MeshStandardMaterial({
+      map: textures.pineBoughMap,
+      alphaTest: 0.4,
+      side: THREE.DoubleSide,
+      roughness: 0.85,
+      metalness: 0.02,
+    });
+    attachWindSway(foliageMat, windUniform, 'pine');
 
-    const tiers = 3;
+    const tiers = 4;
     const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, pineSpots.length);
-    const coneInst = new THREE.InstancedMesh(coneGeo, foliageMat, pineSpots.length * tiers);
+    const boughInst = new THREE.InstancedMesh(boughGeo, foliageMat, pineSpots.length * tiers);
     trunkInst.castShadow = true;
-    coneInst.castShadow = true;
+    trunkInst.receiveShadow = true;
+    boughInst.castShadow = true;
+    boughInst.receiveShadow = true;
 
     let cIdx = 0;
     pineSpots.forEach((p, idx) => {
-      dummy.position.set(p.x, p.y + 2.2 * p.s, p.z);
+      dummy.position.set(p.x, p.y + 3.6 * p.s, p.z);
       dummy.scale.set(p.s, p.s, p.s);
       dummy.rotation.set(0, idx * 0.7, 0);
       dummy.updateMatrix();
       trunkInst.setMatrixAt(idx, dummy.matrix);
 
-      const col = new THREE.Color().setHSL(0.35 + (idx % 3) * 0.015, 0.44, 0.14 + (idx % 3) * 0.025);
+      const col = new THREE.Color().setHSL(
+        0.32 + (idx % 4) * 0.015,
+        0.44,
+        0.52 + (idx % 3) * 0.09,
+      );
       for (let t = 0; t < tiers; t++) {
-        const w = (3.4 - t * 0.75) * p.s;
-        const h = (5.0 - t * 0.6) * p.s;
-        dummy.position.set(p.x, p.y + (4.5 + t * 2.6) * p.s, p.z);
+        const w = (2.8 - t * 0.56) * p.s;
+        const h = (3.4 - t * 0.42) * p.s;
+        dummy.position.set(p.x, p.y + (2.5 + t * 2.0) * p.s, p.z);
         dummy.scale.set(w, h, w);
-        dummy.rotation.set(0, idx + t * 0.6, 0);
+        dummy.rotation.set(0, idx * 0.9 + t * 0.78, 0);
         dummy.updateMatrix();
-        coneInst.setMatrixAt(cIdx, dummy.matrix);
-        coneInst.setColorAt(cIdx, col);
+        boughInst.setMatrixAt(cIdx, dummy.matrix);
+        boughInst.setColorAt(cIdx, col);
         cIdx++;
       }
     });
     trunkInst.instanceMatrix.needsUpdate = true;
-    coneInst.instanceMatrix.needsUpdate = true;
-    if (coneInst.instanceColor) coneInst.instanceColor.needsUpdate = true;
-    worldGroup.add(trunkInst, coneInst);
-    disposables.push(trunkGeo, trunkMat, coneGeo, foliageMat);
+    boughInst.instanceMatrix.needsUpdate = true;
+    if (boughInst.instanceColor) boughInst.instanceColor.needsUpdate = true;
+    trunkInst.computeBoundingSphere();
+    boughInst.computeBoundingSphere();
+    worldGroup.add(trunkInst, boughInst);
+    disposables.push(trunkGeo, trunkMat, boughGeo, foliageMat);
   }
 
-  // 10. Sleek Highway Light Poles along Harbor & Suspension Bridge
+  // 10. Instanced Wind-Swayed Wild Roadside & Meadow Grass (3,600+ Tufts)
+  const grassSpots: Array<{ x: number; y: number; z: number; sx: number; sy: number; yaw: number; tint: THREE.Color }> = [];
+  const grassTint = new THREE.Color();
+
+  // Golden-angle spiral distribution centered near coastal/canyon/alpine corridors + roadside clusters
+  for (let i = 0; i < 6200 && grassSpots.length < 3600; i++) {
+    let gx = 0;
+    let gz = 0;
+    if (i < 2800) {
+      // Roadside lush verges & embankments around the full 3.8km highway loop
+      const stIdx = (i * 19) % TRACK_STATION_COUNT;
+      const st = TRACK_STATIONS[stIdx];
+      const side = i % 2 === 0 ? 1 : -1;
+      const latDist = st.roadWidth * 0.5 + 2.2 + ((i * 37) % 100) * 0.28;
+      gx = st.x + st.rx * (side * latDist) + Math.sin(i * 1.7) * 1.6;
+      gz = st.z + st.rz * (side * latDist) + Math.cos(i * 2.3) * 1.6;
+    } else {
+      // Broader canyon/alpine/harbor meadows
+      const k = i - 2800;
+      const a = k * 2.399963;
+      const r = 45 + Math.sqrt(k / 3400) * 760;
+      gx = Math.cos(a) * r;
+      gz = Math.sin(a) * r;
+    }
+
+    if (Math.abs(gx) > WORLD_HALF_SIZE - 20 || Math.abs(gz) > WORLD_HALF_SIZE - 20) continue;
+    const py = getTerrainHeight(gx, gz);
+    if (py < 0.95 || py > 39) continue; // Strictly above sea/beach sand & below alpine snowpeaks
+
+    const hx = getTerrainHeight(gx + 3, gz);
+    const hz = getTerrainHeight(gx, gz + 3);
+    const slope = Math.hypot(hx - py, hz - py) / 3;
+    if (slope > 0.44) continue; // Not on sheer vertical rock faces
+
+    const proj = projectOntoTrack(gx, gz);
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.9) continue; // Keep tarmac & curbs clear
+
+    // Biome color harmony: warm coastal olive/sage in Sunset Coast & Palm Canyon vs deep forest emerald in Alpine Pass
+    if (gx < -140 && gz > -460 && gz < 440) {
+      grassTint.setHSL(0.22 + (i % 5) * 0.014, 0.46, 0.48 + (i % 4) * 0.06);
+    } else if (gz > 120 && gx > 180) {
+      grassTint.setHSL(0.27 + (i % 4) * 0.012, 0.48, 0.45 + (i % 3) * 0.05);
+    } else {
+      grassTint.setHSL(0.29 + (i % 5) * 0.012, 0.44, 0.36 + (i % 4) * 0.05);
+    }
+
+    grassSpots.push({
+      x: gx,
+      y: py - 0.04, // sink root slightly into soil so zero floating gaps on slopes
+      z: gz,
+      sx: 0.85 + (i % 5) * 0.16,
+      sy: 0.72 + (i % 6) * 0.15,
+      yaw: (i * 1.13) % (Math.PI * 2),
+      tint: grassTint.clone(),
+    });
+  }
+
+  if (grassSpots.length > 0) {
+    const grassGeo = buildGrassTuftGeometry();
+    const grassMat = new THREE.MeshStandardMaterial({
+      map: textures.grassTuftMap,
+      alphaTest: 0.42,
+      side: THREE.DoubleSide,
+      roughness: 0.86,
+      metalness: 0.02,
+    });
+    attachWindSway(grassMat, windUniform, 'grass');
+
+    const grassInst = new THREE.InstancedMesh(grassGeo, grassMat, grassSpots.length);
+    grassInst.receiveShadow = true;
+    grassInst.castShadow = false;
+
+    grassSpots.forEach((g, idx) => {
+      dummy.position.set(g.x, g.y, g.z);
+      dummy.rotation.set(0, g.yaw, 0);
+      dummy.scale.set(g.sx, g.sy, g.sx);
+      dummy.updateMatrix();
+      grassInst.setMatrixAt(idx, dummy.matrix);
+      grassInst.setColorAt(idx, g.tint);
+    });
+    grassInst.instanceMatrix.needsUpdate = true;
+    if (grassInst.instanceColor) grassInst.instanceColor.needsUpdate = true;
+    grassInst.computeBoundingSphere();
+    worldGroup.add(grassInst);
+    disposables.push(grassGeo, grassMat);
+  }
+
+  // 11. Sleek Highway Light Poles along Harbor, Coast & Tunnel Approaches (Nocturnal Reactive)
   const poleSpots: Array<{ x: number; y: number; z: number; yaw: number; side: number }> = [];
   for (let i = 0; i < TRACK_STATION_COUNT; i += 10) {
     const st = TRACK_STATIONS[i];
@@ -627,13 +938,19 @@ export function buildRealFumaWorld(
       });
     }
   }
+  let lampMat: THREE.MeshStandardMaterial | null = null;
   if (poleSpots.length > 0) {
     const poleGeo = new THREE.CylinderGeometry(0.1, 0.14, 7.6, 8);
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.7, roughness: 0.35 });
-    const lampMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfef08a, emissiveIntensity: 1.4 });
+    lampMat = new THREE.MeshStandardMaterial({
+      color: 0xfef3c7,
+      emissive: 0xffd57e,
+      emissiveIntensity: 0.25,
+    });
     const lampGeo = new THREE.BoxGeometry(1.1, 0.22, 0.45);
     const poleInst = new THREE.InstancedMesh(poleGeo, poleMat, poleSpots.length);
     const lampInst = new THREE.InstancedMesh(lampGeo, lampMat, poleSpots.length);
+    poleInst.castShadow = true;
 
     poleSpots.forEach((p, idx) => {
       dummy.position.set(p.x, p.y + 3.8, p.z);
@@ -650,11 +967,13 @@ export function buildRealFumaWorld(
     });
     poleInst.instanceMatrix.needsUpdate = true;
     lampInst.instanceMatrix.needsUpdate = true;
+    poleInst.computeBoundingSphere();
+    lampInst.computeBoundingSphere();
     worldGroup.add(poleInst, lampInst);
     disposables.push(poleGeo, poleMat, lampGeo, lampMat);
   }
 
-  // 11. Active Race Checkpoint Gate Beacon
+  // 12. Active Race Checkpoint Gate Beacon
   const checkpointBeacon = new THREE.Group();
   const cpRingGeo = new THREE.CylinderGeometry(8.2, 8.2, 16, 28, 1, true);
   const cpRingMat = new THREE.MeshBasicMaterial({
@@ -675,11 +994,19 @@ export function buildRealFumaWorld(
     worldGroup,
     asphaltRoadMat,
     checkpointBeacon,
-    updateDynamicWorld: (timeSec, isWet) => {
-      const targetRough = isWet ? 0.16 : 0.58;
-      const targetMetal = isWet ? 0.32 : 0.08;
+    updateDynamicWorld: (timeSec, isWet, nightFactor = 0) => {
+      windUniform.value = timeSec;
+      const targetRough = isWet ? 0.25 : 0.8;
+      const targetMetal = isWet ? 0.28 : 0.08;
       asphaltRoadMat.roughness += (targetRough - asphaltRoadMat.roughness) * 0.08;
       asphaltRoadMat.metalness += (targetMetal - asphaltRoadMat.metalness) * 0.08;
+
+      // Nocturnal building window glow + coastal streetlamp ignition
+      shaftMat.emissiveIntensity = nightFactor * 1.15;
+      if (lampMat) {
+        lampMat.emissiveIntensity = 0.12 + nightFactor * 2.25;
+      }
+
       if (checkpointBeacon.visible) {
         checkpointBeacon.rotation.y = timeSec * 1.6;
       }

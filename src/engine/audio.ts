@@ -14,6 +14,11 @@ export class RacingAudioEngine {
   private screechFilter: BiquadFilterNode | null = null;
   private noiseSource: AudioBufferSourceNode | null = null;
 
+  private nitroJetGain: GainNode | null = null;
+  private nitroJetFilter: BiquadFilterNode | null = null;
+  private turboOsc: OscillatorNode | null = null;
+  private turboGain: GainNode | null = null;
+
   private sirenOsc: OscillatorNode | null = null;
   private sirenGain: GainNode | null = null;
 
@@ -96,6 +101,27 @@ export class RacingAudioEngine {
       this.noiseSource.connect(this.screechFilter);
       this.screechFilter.connect(this.screechGain);
       this.screechGain.connect(this.sfxGain);
+
+      // Pressurized Nitrous Oxide Jet Roar + High-RPM Turbo Spool
+      this.nitroJetFilter = ctx.createBiquadFilter();
+      this.nitroJetFilter.type = 'bandpass';
+      this.nitroJetFilter.frequency.value = 620;
+      this.nitroJetFilter.Q.value = 1.1;
+      this.nitroJetGain = ctx.createGain();
+      this.nitroJetGain.gain.value = 0;
+      this.noiseSource.connect(this.nitroJetFilter);
+      this.nitroJetFilter.connect(this.nitroJetGain);
+      this.nitroJetGain.connect(this.sfxGain);
+
+      this.turboOsc = ctx.createOscillator();
+      this.turboOsc.type = 'sine';
+      this.turboOsc.frequency.value = 920;
+      this.turboGain = ctx.createGain();
+      this.turboGain.gain.value = 0;
+      this.turboOsc.connect(this.turboGain);
+      this.turboGain.connect(this.sfxGain);
+      this.turboOsc.start();
+
       this.noiseSource.start();
 
       // Police siren oscillator
@@ -170,6 +196,8 @@ export class RacingAudioEngine {
     if (!params.active) {
       this.engineGain?.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain?.gain.setTargetAtTime(0, now, 0.08);
+      this.nitroJetGain?.gain.setTargetAtTime(0, now, 0.06);
+      this.turboGain?.gain.setTargetAtTime(0, now, 0.06);
       this.sirenGain?.gain.setTargetAtTime(0, now, 0.08);
       return;
     }
@@ -188,22 +216,32 @@ export class RacingAudioEngine {
       maxFreq = 215;
     }
 
-    const freq = baseFreq + (maxFreq - baseFreq) * rpmNorm * (params.nitroActive ? 1.12 : 1);
+    const freq = baseFreq + (maxFreq - baseFreq) * rpmNorm * (params.nitroActive ? 1.15 : 1);
     this.oscPrimary?.frequency.setTargetAtTime(freq, now, 0.025);
     this.oscSub?.frequency.setTargetAtTime(freq * 0.5, now, 0.025);
 
-    const filterCutoff = 220 + rpmNorm * 1400 + params.throttle * 650 + (params.nitroActive ? 700 : 0);
+    const filterCutoff = 220 + rpmNorm * 1450 + params.throttle * 650 + (params.nitroActive ? 850 : 0);
     this.engineFilter?.frequency.setTargetAtTime(filterCutoff, now, 0.03);
 
-    const engLevel = (0.09 + params.throttle * 0.14 + rpmNorm * 0.08) * this.engineVol;
+    const engLevel = (0.09 + params.throttle * 0.14 + rpmNorm * 0.08 + (params.nitroActive ? 0.06 : 0)) * this.engineVol;
     this.engineGain?.gain.setTargetAtTime(engLevel, now, 0.04);
 
-    // Tire screech
-    const screechLvl = Math.min(0.22, params.driftIntensity * 0.2);
-    this.screechGain?.gain.setTargetAtTime(screechLvl, now, 0.04);
+    // Tire screech (authentic high-frequency rubber squeal during drifts)
+    const screechLvl = Math.min(0.28, params.driftIntensity * 0.26);
+    this.screechGain?.gain.setTargetAtTime(screechLvl, now, 0.035);
     if (this.screechFilter) {
-      this.screechFilter.frequency.setTargetAtTime(950 + params.driftIntensity * 650, now, 0.05);
+      this.screechFilter.frequency.setTargetAtTime(1020 + params.driftIntensity * 680, now, 0.045);
     }
+
+    // Nitrous jet thrust roar + turbo spool whistle
+    this.nitroJetGain?.gain.setTargetAtTime(params.nitroActive ? 0.24 : 0, now, 0.04);
+    this.nitroJetFilter?.frequency.setTargetAtTime(params.nitroActive ? 540 + rpmNorm * 620 : 420, now, 0.05);
+    this.turboGain?.gain.setTargetAtTime(
+      params.nitroActive ? 0.055 : Math.max(0, (rpmNorm - 0.55) * 0.03 * params.throttle),
+      now,
+      0.05,
+    );
+    this.turboOsc?.frequency.setTargetAtTime(880 + rpmNorm * 1150 + (params.nitroActive ? 650 : 0), now, 0.04);
 
     // Police siren wail
     if (params.policeActive && params.policeDistanceM < 220) {
@@ -285,6 +323,7 @@ export class RacingAudioEngine {
       this.oscPrimary?.stop();
       this.oscSub?.stop();
       this.noiseSource?.stop();
+      this.turboOsc?.stop();
       this.sirenOsc?.stop();
       void this.ctx?.close();
     } catch {

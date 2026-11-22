@@ -259,6 +259,8 @@ export interface LiveTelemetry {
   cameraMode: CameraMode;
   weather: WeatherType;
   timeOfDay: TimeOfDay;
+  cycleTimeLabel: string;
+  autoDayNightCycle: boolean;
   fps: number;
   opponents: Array<{ x: number; z: number; name: string }>;
 }

@@ -34,6 +34,7 @@ import {
   VehiclePhysicsState,
 } from './physics';
 import { createProceduralTextures, ProceduralTexturePack } from './textures';
+import { TireSkidmarkSystem } from './skidmarks';
 import { TireSmokeSystem } from './tireSmoke';
 import { TrafficAndAIManager } from './trafficAndAI';
 import { buildRealFumaWorld, BuiltWorld } from './worldBuilder';
@@ -91,6 +92,29 @@ const _roadRight = new THREE.Vector3();
 const _roadNormal = new THREE.Vector3();
 const _qSurface = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
+const _lightDir = new THREE.Vector3();
+const _lightRight = new THREE.Vector3();
+const _lightUp = new THREE.Vector3();
+const _focusPt = new THREE.Vector3();
+
+const SHADOW_HALF_EXTENT = 38;
+const SHADOW_MAP_RES = 2048;
+const SHADOW_TEXEL_SIZE = (SHADOW_HALF_EXTENT * 2) / SHADOW_MAP_RES;
+
+function timePresetToPhase(time: TimeOfDay): number {
+  if (time === 'sunrise') return 0.265;
+  if (time === 'sunset') return 0.745;
+  if (time === 'night') return 0.96;
+  return 0.44;
+}
+
+function formatCycleClock(phase: number): string {
+  const norm = ((phase % 1) + 1) % 1;
+  const totalMins = Math.floor(norm * 24 * 60);
+  const hh = Math.floor(totalMins / 60) % 24;
+  const mm = totalMins % 60;
+  return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`;
+}
 
 function detectSoftwareWebGL(): boolean {
   try {
@@ -132,6 +156,8 @@ export class GameEngine {
   // Lighting
   private sunLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
+  private headlightSpot: THREE.SpotLight | null = null;
+  private exhaustLight: THREE.PointLight | null = null;
   private softboxA: THREE.RectAreaLight | null = null;
   private softboxB: THREE.RectAreaLight | null = null;
   private showroomTurntable: THREE.Mesh;
@@ -140,6 +166,7 @@ export class GameEngine {
   private rainPoints: THREE.Points;
   private rainPositions: Float32Array;
   private tireSmoke: TireSmokeSystem;
+  private skidmarks: TireSkidmarkSystem;
 
   // State
   private mode: 'showcase' | 'drive' = 'showcase';
@@ -148,6 +175,8 @@ export class GameEngine {
   private settings: GameSettings;
   private weather: WeatherType = 'sunny';
   private timeOfDay: TimeOfDay = 'day';
+  private cyclePhase = 0.385; // Start at crisp sunlit coastal morning (~09:14)
+  private autoDayNightCycle = true;
   private cameraMode: CameraMode = 'chase';
   private headlightsManual: boolean | null = null;
   private lightningTimer = 0;
@@ -190,6 +219,8 @@ export class GameEngine {
   private disposed = false;
   private elapsedTime = 0;
   private fpsCounter = 60;
+  private fpsAccumFrames = 0;
+  private fpsAccumSec = 0;
   private telemetryTimer = 0;
   private freeRoamAccumDist = 0;
   private freeRoamAccumTimer = 0;
@@ -261,27 +292,36 @@ export class GameEngine {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.08).texture;
     pmrem.dispose();
 
-    // Crisp coastal daylight rig + car-following 2048x2048 shadow frustum
+    // Crisp coastal daylight rig + car-following texel-snapped 2048x2048 shadow frustum
     this.hemiLight = new THREE.HemisphereLight(0xc2ebff, 0x334155, 0.74);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfffbeb, 1.55);
+    this.sunLight = new THREE.DirectionalLight(0xfffbeb, 1.65);
     this.sunLight.position.set(this.showcasePt.x - 95, 115, this.showcasePt.z - 80);
     this.sunLight.castShadow = !this.isSoftwareGl;
-    this.sunLight.shadow.mapSize.set(2048, 2048);
+    this.sunLight.shadow.mapSize.set(SHADOW_MAP_RES, SHADOW_MAP_RES);
     this.sunLight.shadow.camera.near = 5;
     this.sunLight.shadow.camera.far = 260;
-    const d = 48;
-    this.sunLight.shadow.camera.left = -d;
-    this.sunLight.shadow.camera.right = d;
-    this.sunLight.shadow.camera.top = d;
-    this.sunLight.shadow.camera.bottom = -d;
-    this.sunLight.shadow.bias = -0.0004;
-    this.sunLight.shadow.normalBias = 0.025;
+    this.sunLight.shadow.camera.left = -SHADOW_HALF_EXTENT;
+    this.sunLight.shadow.camera.right = SHADOW_HALF_EXTENT;
+    this.sunLight.shadow.camera.top = SHADOW_HALF_EXTENT;
+    this.sunLight.shadow.camera.bottom = -SHADOW_HALF_EXTENT;
+    this.sunLight.shadow.bias = -0.0003;
+    this.sunLight.shadow.normalBias = 0.016;
+    this.sunLight.shadow.radius = 2.2;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
     if (!this.isSoftwareGl) {
+      // Dynamic Car Headlight Beam Spotlight (non-shadow-casting for zero overhead)
+      this.headlightSpot = new THREE.SpotLight(0xeef6ff, 0, 90, Math.PI / 4.2, 0.65, 1.35);
+      this.headlightSpot.castShadow = false;
+      this.scene.add(this.headlightSpot);
+      this.scene.add(this.headlightSpot.target);
+
+      this.exhaustLight = new THREE.PointLight(0x38bdf8, 0, 14, 2);
+      this.scene.add(this.exhaustLight);
+
       RectAreaLightUniformsLib.init();
       this.softboxA = new THREE.RectAreaLight(0xffffff, 1.5, 9, 4);
       this.softboxA.position.set(this.showcasePt.x - 5, this.showcasePt.y + 6.5, this.showcasePt.z + 7);
@@ -363,11 +403,14 @@ export class GameEngine {
     this.rainPoints.frustumCulled = false;
     this.scene.add(this.rainPoints);
 
-    // High-Fidelity Additive Tire Smoke System
+    // High-Fidelity Additive Tire Smoke & Asphalt Skidmark Systems
     this.tireSmoke = new TireSmokeSystem(
       Math.max(1, container.clientHeight) * this.renderer.getPixelRatio(),
     );
     this.scene.add(this.tireSmoke.points);
+
+    this.skidmarks = new TireSkidmarkSystem();
+    this.scene.add(this.skidmarks.mesh);
 
     // Spawn player showcase vehicle cleanly on coastal highway overlook
     this.setPlayerCar(initialCar);
@@ -432,7 +475,6 @@ export class GameEngine {
     this.playerCarRig = createCarModel(spec, carData.customization, {
       contactShadowMap: this.textures.contactShadowMap,
       carbonMap: this.textures.carbonMap,
-      withLightCones: true,
     });
     this.scene.add(this.playerCarRig.root);
     this.syncCarPoseToTrack();
@@ -486,75 +528,70 @@ export class GameEngine {
 
   private syncBloomStrength(): void {
     if (!this.bloomPass) return;
-    if (
-      this.settings.graphicsPreset === 'LOW' ||
-      (this.timeOfDay !== 'night' && this.timeOfDay !== 'sunset')
-    ) {
+    if (this.settings.graphicsPreset === 'LOW') {
       this.bloomPass.strength = 0;
     } else {
-      this.bloomPass.strength = this.timeOfDay === 'night' ? 0.18 : 0.12;
+      this.bloomPass.strength = this.atmosphere.state.bloomStrength;
     }
   }
 
   public setAtmosphere(weather: WeatherType, time: TimeOfDay): void {
     this.weather = weather;
     this.timeOfDay = time;
+    this.cyclePhase = timePresetToPhase(time);
     this.applyAtmosphere();
   }
 
+  public setAutoDayNightCycle(enabled: boolean): void {
+    this.autoDayNightCycle = enabled;
+  }
+
+  public toggleAutoDayNightCycle(): boolean {
+    this.autoDayNightCycle = !this.autoDayNightCycle;
+    return this.autoDayNightCycle;
+  }
+
   private applyAtmosphere(): void {
-    const isNight = this.timeOfDay === 'night';
-    const isSunset = this.timeOfDay === 'sunset';
-    const isSunrise = this.timeOfDay === 'sunrise';
-    const isOvercast =
-      this.weather === 'cloudy' ||
-      this.weather === 'rain' ||
-      this.weather === 'heavy_rain' ||
-      this.weather === 'thunderstorm';
+    this.atmosphere.update(
+      this.elapsedTime,
+      this.cyclePhase,
+      this.physics.x,
+      this.physics.z,
+      this.weather,
+      this.camera.far,
+    );
+    const atm = this.atmosphere.state;
+    this.timeOfDay = atm.derivedTimeOfDay;
 
-    const fogColor = isNight
-      ? 0x0b1528
-      : isSunset
-        ? 0xd96b52
-        : isSunrise
-          ? 0x93c5fd
-          : isOvercast
-            ? 0x64748b
-            : 0xa4e4ff;
-
-    let fogDensity = 0.00052;
+    let fogDensity = 0.00046;
     if (this.weather === 'fog') fogDensity = 0.0036;
     else if (this.weather === 'heavy_rain' || this.weather === 'thunderstorm') fogDensity = 0.0018;
     else if (this.weather === 'rain') fogDensity = 0.0011;
-
-    this.scene.fog = new THREE.FogExp2(fogColor, fogDensity);
-    this.scene.background = new THREE.Color(fogColor);
-
-    if (isNight) {
-      this.sunLight.color.setHex(0x93c5fd);
-      this.sunLight.intensity = 0.68;
-      this.hemiLight.color.setHex(0x1e3a8a);
-      this.hemiLight.groundColor.setHex(0x090b10);
-      this.hemiLight.intensity = 0.55;
-    } else if (isSunset) {
-      this.sunLight.color.setHex(0xfb923c);
-      this.sunLight.intensity = 1.42;
-      this.hemiLight.color.setHex(0xfda4af);
-      this.hemiLight.groundColor.setHex(0x1f2937);
-      this.hemiLight.intensity = 0.65;
-    } else if (isSunrise) {
-      this.sunLight.color.setHex(0xfde68a);
-      this.sunLight.intensity = 1.35;
-      this.hemiLight.color.setHex(0xbae6fd);
-      this.hemiLight.groundColor.setHex(0x1e293b);
-      this.hemiLight.intensity = 0.65;
-    } else {
-      this.sunLight.color.setHex(0xfffbeb);
-      this.sunLight.intensity = this.weather === 'sunny' ? 1.55 : 1.05;
-      this.hemiLight.color.setHex(0xc2ebff);
-      this.hemiLight.groundColor.setHex(0x334155);
-      this.hemiLight.intensity = 0.74;
+    else {
+      // Slight atmospheric twilight mist near sunset/dawn
+      const goldenMist = Math.max(0, 1 - Math.abs(atm.sunElevation) * 4.2) * 0.00018;
+      fogDensity += goldenMist + atm.nightFactor * 0.00014;
     }
+
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.color.copy(atm.fogColor);
+      this.scene.fog.density = fogDensity;
+    } else {
+      this.scene.fog = new THREE.FogExp2(atm.fogColor.getHex(), fogDensity);
+    }
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background.copy(atm.fogColor);
+    } else {
+      this.scene.background = atm.fogColor.clone();
+    }
+
+    this.sunLight.color.copy(atm.keyColor);
+    this.sunLight.intensity = atm.keyIntensity;
+    this.hemiLight.color.copy(atm.hemiSkyColor);
+    this.hemiLight.groundColor.copy(atm.hemiGroundColor);
+    this.hemiLight.intensity = atm.hemiIntensity;
+    this.scene.environmentIntensity = atm.envIntensity;
+    this.renderer.toneMappingExposure = atm.exposure;
 
     this.syncBloomStrength();
 
@@ -582,6 +619,7 @@ export class GameEngine {
       this.raceState = 'free_roam';
       this.trafficAI.clearRacers();
       this.tireSmoke.clear();
+      this.skidmarks.clear();
       this.physics = createInitialPhysicsStateAtS(SHOWCASE_S, 0);
       this.physics.y = this.showcasePt.y + 0.02;
       if (this.speedBlurPass) {
@@ -650,6 +688,7 @@ export class GameEngine {
 
   public fastTravelTo(x: number, z: number): void {
     this.tireSmoke.clear();
+    this.skidmarks.clear();
     const proj = projectOntoTrack(x, z);
     this.physics = createInitialPhysicsStateAtS(proj.station.s, 0);
     this.syncCarPoseToTrack();
@@ -695,6 +734,7 @@ export class GameEngine {
     const st = TRACK_STATIONS[this.physics.stationIdx] ?? TRACK_STATIONS[0];
     this.physics = createInitialPhysicsStateAtS(st.s, 0);
     this.tireSmoke.clear();
+    this.skidmarks.clear();
     this.syncCarPoseToTrack();
   }
 
@@ -822,7 +862,8 @@ export class GameEngine {
     if (
       this.keysHeld.has('ShiftLeft') ||
       this.keysHeld.has('ShiftRight') ||
-      this.keysHeld.has('KeyN')
+      this.keysHeld.has('KeyN') ||
+      this.keysHeld.has('KeyX')
     ) {
       nitro = true;
     }
@@ -890,7 +931,13 @@ export class GameEngine {
       const rawDt = this.clock.getDelta();
       const dt = Math.min(rawDt, 0.05);
       if (rawDt > 0.0001) {
-        this.fpsCounter += (1 / rawDt - this.fpsCounter) * 0.1;
+        this.fpsAccumFrames += 1;
+        this.fpsAccumSec += rawDt;
+        if (this.fpsAccumSec >= 0.35) {
+          this.fpsCounter = this.fpsAccumFrames / this.fpsAccumSec;
+          this.fpsAccumFrames = 0;
+          this.fpsAccumSec = 0;
+        }
       }
 
       if (!this.contextLost) {
@@ -924,43 +971,69 @@ export class GameEngine {
       if (this.disposed) return;
       const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
       if (state === gl.UNSIGNALED) {
-        this.frameId = window.setTimeout(poll, 5);
+        this.frameId = window.setTimeout(poll, 4);
       } else {
         if (sync) gl.deleteSync(sync);
-        this.frameId = window.setTimeout(cb, 80);
+        this.frameId = window.setTimeout(cb, 16);
       }
     };
-    this.frameId = window.setTimeout(poll, 5);
+    this.frameId = window.setTimeout(poll, 4);
+  }
+
+  private updateTexelSnappedShadows(): void {
+    const sd = this.atmosphere.state.keyDirection;
+    _lightDir.copy(sd).normalize();
+
+    // Bias shadow center slightly ahead of player along forward direction when driving
+    const ahead = this.mode === 'drive' ? 10 : 0;
+    const fx = this.physics.x + Math.sin(this.physics.heading) * ahead;
+    const fy = this.physics.y;
+    const fz = this.physics.z + Math.cos(this.physics.heading) * ahead;
+    _focusPt.set(fx, fy, fz);
+
+    // Construct orthonormal light basis & snap target to exact shadow texel grid to prevent shadow crawl
+    _lightRight.crossVectors(_worldUp, _lightDir);
+    if (_lightRight.lengthSq() < 1e-4) {
+      _lightRight.set(1, 0, 0);
+    } else {
+      _lightRight.normalize();
+    }
+    _lightUp.crossVectors(_lightDir, _lightRight).normalize();
+
+    const projR = Math.round(_focusPt.dot(_lightRight) / SHADOW_TEXEL_SIZE) * SHADOW_TEXEL_SIZE;
+    const projU = Math.round(_focusPt.dot(_lightUp) / SHADOW_TEXEL_SIZE) * SHADOW_TEXEL_SIZE;
+    const projD = _focusPt.dot(_lightDir);
+
+    this.sunLight.target.position
+      .set(0, 0, 0)
+      .addScaledVector(_lightRight, projR)
+      .addScaledVector(_lightUp, projU)
+      .addScaledVector(_lightDir, projD);
+    this.sunLight.target.updateMatrixWorld();
+
+    this.sunLight.position
+      .copy(this.sunLight.target.position)
+      .addScaledVector(_lightDir, 130);
   }
 
   private stepSimulation(dt: number): void {
     this.elapsedTime += dt;
+
+    // Advance continuous 24h Day-Night cycle
+    if (this.autoDayNightCycle && !(this.mode === 'drive' && this.paused)) {
+      const cycleRate = this.mode === 'drive' ? 1 / 145 : 1 / 240;
+      this.cyclePhase = (this.cyclePhase + dt * cycleRate) % 1;
+    }
+
     const isWet =
       this.weather === 'rain' ||
       this.weather === 'heavy_rain' ||
       this.weather === 'thunderstorm';
-    this.world.updateDynamicWorld(this.elapsedTime, isWet);
-    this.atmosphere.update(
-      this.elapsedTime,
-      this.physics.x,
-      this.physics.z,
-      this.weather,
-      this.timeOfDay,
-      this.camera.far,
-    );
 
-    const sd = this.atmosphere.sunDirection;
-    this.sunLight.position.set(
-      this.physics.x + sd.x * 130,
-      this.physics.y + Math.max(45, sd.y * 155),
-      this.physics.z + sd.z * 130,
-    );
-    this.sunLight.target.position.set(
-      this.physics.x,
-      this.physics.y,
-      this.physics.z,
-    );
-    this.sunLight.target.updateMatrixWorld();
+    this.applyAtmosphere();
+    const atm = this.atmosphere.state;
+    this.world.updateDynamicWorld(this.elapsedTime, isWet, atm.nightFactor);
+    this.updateTexelSnappedShadows();
 
     if (this.weather === 'thunderstorm') {
       this.lightningTimer -= dt;
@@ -970,11 +1043,13 @@ export class GameEngine {
       }
       if (this.lightningFlash > 0) {
         this.lightningFlash = Math.max(0, this.lightningFlash - dt * 4.5);
-        this.sunLight.intensity = 1.4 + this.lightningFlash * 4.0;
+        this.sunLight.intensity = atm.keyIntensity + this.lightningFlash * 4.0;
       }
     }
 
     if (this.mode === 'showcase') {
+      if (this.headlightSpot) this.headlightSpot.intensity = 0;
+      if (this.exhaustLight) this.exhaustLight.intensity = 0;
       if (this.autoOrbit) {
         this.orbitYaw += dt * 0.22;
       }
@@ -1086,7 +1161,52 @@ export class GameEngine {
       this.physics.rollRad,
       this.physics.heaveY,
     );
-    this.playerCarRig.setLights(hlOn, input.brake > 0.1, this.physics.nitroActive);
+    const flameVisible =
+      this.physics.nitroActive || this.physics.exhaustFlameTimer > 0;
+    this.playerCarRig.setLights(hlOn, input.brake > 0.1, flameVisible);
+
+    // Dynamic afterburner PointLight illuminating asphalt behind exhaust tips
+    const sinH = Math.sin(this.physics.heading);
+    const cosH = Math.cos(this.physics.heading);
+    if (this.exhaustLight) {
+      if (flameVisible) {
+        this.exhaustLight.position.set(
+          this.physics.x - sinH * 2.55,
+          this.physics.y + 0.42,
+          this.physics.z - cosH * 2.55,
+        );
+        this.exhaustLight.intensity = this.physics.nitroActive
+          ? 7.5 + Math.random() * 3.5
+          : 4.5;
+      } else {
+        this.exhaustLight.intensity = 0;
+      }
+    }
+
+    // Subtle NOS chassis vibration & engine surge feedback
+    if (this.physics.nitroActive && this.settings.cameraShake) {
+      this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.045);
+    }
+
+    // Real dynamic car headlight pool illuminating highway & foliage at dusk/night
+    if (this.headlightSpot) {
+      if (hlOn) {
+        this.headlightSpot.position.set(
+          this.physics.x + sinH * 2.0,
+          this.physics.y + 0.78,
+          this.physics.z + cosH * 2.0,
+        );
+        this.headlightSpot.target.position.set(
+          this.physics.x + sinH * 28,
+          this.physics.y - 0.85,
+          this.physics.z + cosH * 28,
+        );
+        this.headlightSpot.target.updateMatrixWorld();
+        this.headlightSpot.intensity = 18 + atm.nightFactor * 42;
+      } else {
+        this.headlightSpot.intensity = 0;
+      }
+    }
 
     // Rain particles around car
     if (this.rainPoints.visible) {
@@ -1102,8 +1222,20 @@ export class GameEngine {
       this.rainPoints.geometry.attributes.position.needsUpdate = true;
     }
 
-    // Additive Tire Smoke Particle System (triggered when driftAngleDeg > 15)
+    // Additive Tire Smoke & Asphalt Rubber Skidmark Systems
     this.tireSmoke.update(dt, this.physics, spec, input, this.weather);
+    const isBurnout =
+      this.physics.surface === 'asphalt' &&
+      input.throttle > 0.65 &&
+      input.brake > 0.35 &&
+      this.physics.speedKmh < 28;
+    this.skidmarks.update(this.physics, spec, input.handbrake, isBurnout);
+
+    const driftAudioLevel = Math.max(
+      this.physics.isDrifting ? Math.min(1, this.physics.driftAngleDeg / 38) : 0,
+      input.handbrake && this.physics.speedKmh > 18 ? 0.55 : 0,
+      isBurnout ? 0.72 : 0,
+    );
 
     audioEngine.updateContinuous({
       active:
@@ -1112,10 +1244,8 @@ export class GameEngine {
         this.raceState === 'countdown',
       rpm: this.physics.rpm,
       maxRpm: this.physics.maxRpm,
-      throttle: input.throttle,
-      driftIntensity: this.physics.isDrifting
-        ? Math.min(1, this.physics.driftAngleDeg / 45)
-        : 0,
+      throttle: this.physics.nitroActive ? 1.0 : input.throttle,
+      driftIntensity: driftAudioLevel,
       nitroActive: this.physics.nitroActive,
       policeActive: false,
       policeDistanceM: 999,
@@ -1214,7 +1344,7 @@ export class GameEngine {
     let targetFov =
       55 +
       Math.min(20, this.physics.speedKmh * 0.068) +
-      (this.physics.nitroActive ? 8 : 0);
+      (this.physics.nitroActive ? 11 : 0);
 
     if (this.cameraMode === 'far') {
       backDist = 9.0;
@@ -1225,13 +1355,13 @@ export class GameEngine {
       heightOffset = 1.32;
       lookAhead = 22;
       lateralSwing = 0;
-      targetFov = 65 + (this.physics.nitroActive ? 6 : 0);
+      targetFov = 65 + (this.physics.nitroActive ? 9 : 0);
     } else if (this.cameraMode === 'bumper') {
       backDist = -2.25;
       heightOffset = 0.7;
       lookAhead = 28;
       lateralSwing = 0;
-      targetFov = 70 + (this.physics.nitroActive ? 6 : 0);
+      targetFov = 70 + (this.physics.nitroActive ? 9 : 0);
     } else if (this.cameraMode === 'cinematic') {
       const sweep = this.elapsedTime * 0.45;
       _camTarget.set(
@@ -1279,7 +1409,7 @@ export class GameEngine {
         0,
         1,
       );
-      const targetBlur = speedNorm * 0.19 + (this.physics.nitroActive ? 0.12 : 0);
+      const targetBlur = speedNorm * 0.19 + (this.physics.nitroActive ? 0.18 : 0);
       const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
       this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
         curBlur,
@@ -1358,6 +1488,8 @@ export class GameEngine {
       cameraMode: this.cameraMode,
       weather: this.weather,
       timeOfDay: this.timeOfDay,
+      cycleTimeLabel: formatCycleClock(this.cyclePhase),
+      autoDayNightCycle: this.autoDayNightCycle,
       fps: Math.round(this.fpsCounter),
       opponents: this.trafficAI.racers.map((r) => ({
         x: r.x,
@@ -1387,6 +1519,7 @@ export class GameEngine {
     this.rainPoints.geometry.dispose();
     (this.rainPoints.material as THREE.Material).dispose();
     this.tireSmoke.dispose();
+    this.skidmarks.dispose();
     this.showroomTurntable.geometry.dispose();
     (this.showroomTurntable.material as THREE.Material).dispose();
     this.renderer.dispose();

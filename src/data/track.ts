@@ -283,13 +283,53 @@ export function getStationAtS(s: number): TrackStation {
 export function getRoadPointAt(
   s: number,
   lateralOffset = 0,
-): { x: number; y: number; z: number; heading: number; station: TrackStation } {
-  const st = getStationAtS(s);
-  const x = st.x + st.rx * lateralOffset;
-  const z = st.z + st.rz * lateralOffset;
-  const y = st.y + lateralOffset * Math.sin(st.bankRad);
-  const heading = Math.atan2(st.tx, st.tz);
-  return { x, y, z, heading, station: st };
+): {
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  tx: number;
+  ty: number;
+  tz: number;
+  rx: number;
+  rz: number;
+  bankRad: number;
+  station: TrackStation;
+} {
+  const norm = ((s % 1) + 1) % 1;
+  const fIdx = norm * TRACK_STATION_COUNT;
+  const i0 = Math.floor(fIdx) % TRACK_STATION_COUNT;
+  const i1 = (i0 + 1) % TRACK_STATION_COUNT;
+  const alpha = fIdx - Math.floor(fIdx);
+
+  const st0 = TRACK_STATIONS[i0];
+  const st1 = TRACK_STATIONS[i1];
+
+  const cx = THREE.MathUtils.lerp(st0.x, st1.x, alpha);
+  const cy = THREE.MathUtils.lerp(st0.y, st1.y, alpha);
+  const cz = THREE.MathUtils.lerp(st0.z, st1.z, alpha);
+
+  let tx = THREE.MathUtils.lerp(st0.tx, st1.tx, alpha);
+  let ty = THREE.MathUtils.lerp(st0.ty, st1.ty, alpha);
+  let tz = THREE.MathUtils.lerp(st0.tz, st1.tz, alpha);
+  const tLen = Math.max(0.0001, Math.hypot(tx, ty, tz));
+  tx /= tLen;
+  ty /= tLen;
+  tz /= tLen;
+
+  let rx = THREE.MathUtils.lerp(st0.rx, st1.rx, alpha);
+  let rz = THREE.MathUtils.lerp(st0.rz, st1.rz, alpha);
+  const rLen = Math.max(0.0001, Math.hypot(rx, rz));
+  rx /= rLen;
+  rz /= rLen;
+
+  const bankRad = THREE.MathUtils.lerp(st0.bankRad, st1.bankRad, alpha);
+  const x = cx + rx * lateralOffset;
+  const z = cz + rz * lateralOffset;
+  const y = cy + lateralOffset * Math.sin(bankRad);
+  const heading = Math.atan2(tx, tz);
+
+  return { x, y, z, heading, tx, ty, tz, rx, rz, bankRad, station: st0 };
 }
 
 // Coastal & Bay geography mask (0 = open water, 1 = solid dry land)

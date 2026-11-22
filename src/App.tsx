@@ -67,6 +67,8 @@ const INITIAL_TELEMETRY: LiveTelemetry = {
   cameraMode: 'chase',
   weather: 'sunny',
   timeOfDay: 'day',
+  cycleTimeLabel: '09:14',
+  autoDayNightCycle: true,
   fps: 60,
   opponents: [],
 };
@@ -389,6 +391,8 @@ export default function App() {
         <PauseModal
           weather={telemetry.weather}
           timeOfDay={telemetry.timeOfDay}
+          cycleTimeLabel={telemetry.cycleTimeLabel}
+          autoDayNightCycle={telemetry.autoDayNightCycle}
           headlightsOn={telemetry.headlightsOn}
           onResume={() => {
             setPaused(false);
@@ -410,6 +414,10 @@ export default function App() {
           onCycleWeather={(w, t) => {
             engineRef.current?.setAtmosphere(w, t);
             setTelemetry((prev) => ({ ...prev, weather: w, timeOfDay: t }));
+          }}
+          onToggleDayNightCycle={() => {
+            const next = engineRef.current?.toggleAutoDayNightCycle() ?? true;
+            setTelemetry((prev) => ({ ...prev, autoDayNightCycle: next }));
           }}
           onToggleHeadlights={() => {
             engineRef.current?.toggleHeadlights();
