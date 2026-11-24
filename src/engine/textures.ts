@@ -22,6 +22,7 @@ export interface ProceduralTexturePack {
   fernFrondMap: THREE.CanvasTexture;
   grassTuftMap: THREE.CanvasTexture;
   cloudMap: THREE.CanvasTexture;
+  carDirtMap: THREE.CanvasTexture;
   dispose: () => void;
 }
 
@@ -860,6 +861,83 @@ export function createProceduralTextures(
   const cloudMap = new THREE.CanvasTexture(clCanvas);
   cloudMap.colorSpace = THREE.SRGBColorSpace;
 
+  // 13. Tileable Fine-Grain Car Body Road Dust & Lower-Sill Mud Splatter Map (512x512)
+  // Channel usage: R = fine mud specks, G = subtle spray streaks, B = soft dry dust veil
+  const dtSize = 512;
+  const dtCanvas = document.createElement('canvas');
+  dtCanvas.width = dtSize;
+  dtCanvas.height = dtSize;
+  const dtCtx = dtCanvas.getContext('2d')!;
+  const dtImg = dtCtx.createImageData(dtSize, dtSize);
+  const dtData = dtImg.data;
+  const dtRng = makeRng(7741);
+
+  for (let y = 0; y < dtSize; y++) {
+    const waveY = Math.sin((y / dtSize) * Math.PI * 10) * 0.5 + 0.5;
+    for (let x = 0; x < dtSize; x++) {
+      const idx = (y * dtSize + x) * 4;
+      const waveX = Math.sin((x / dtSize) * Math.PI * 12 + waveY * 1.9) * 0.5 + 0.5;
+      const fine = dtRng();
+      const dust = Math.round(45 + fine * 95 + waveX * 32);
+      const streak = Math.round(52 + waveY * 72 + fine * 68);
+      dtData[idx] = Math.round(18 + fine * 56);
+      dtData[idx + 1] = Math.min(255, streak);
+      dtData[idx + 2] = Math.min(255, dust);
+      dtData[idx + 3] = 255;
+    }
+  }
+  dtCtx.putImageData(dtImg, 0, 0);
+
+  const paintWrapped = (drawAt: (ox: number, oy: number) => void) => {
+    for (const ox of [-dtSize, 0, dtSize]) {
+      for (const oy of [-dtSize, 0, dtSize]) {
+        drawAt(ox, oy);
+      }
+    }
+  };
+
+  // Fine lower-body mud micro-specks & splash droplets (never blocky camo spots)
+  for (let i = 0; i < 620; i++) {
+    const cx = dtRng() * dtSize;
+    const cy = dtRng() * dtSize;
+    const r = 1.6 + dtRng() * 5.4;
+    const strength = 0.25 + dtRng() * 0.5;
+    paintWrapped((ox, oy) => {
+      const g = dtCtx.createRadialGradient(cx + ox, cy + oy, r * 0.15, cx + ox, cy + oy, r);
+      g.addColorStop(0, `rgba(240, 185, 130, ${strength.toFixed(2)})`);
+      g.addColorStop(1, 'rgba(180, 120, 75, 0)');
+      dtCtx.fillStyle = g;
+      dtCtx.beginPath();
+      dtCtx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+      dtCtx.fill();
+    });
+  }
+
+  // Fine aerodynamic wheel-spray mist streaks
+  for (let i = 0; i < 520; i++) {
+    const sx = dtRng() * dtSize;
+    const sy = dtRng() * dtSize;
+    const len = 6 + dtRng() * 20;
+    const angle = (dtRng() - 0.5) * 0.35;
+    const lw = 0.8 + dtRng() * 1.8;
+    const alpha = 0.18 + dtRng() * 0.42;
+    paintWrapped((ox, oy) => {
+      dtCtx.strokeStyle = `rgba(235, 200, 155, ${alpha.toFixed(2)})`;
+      dtCtx.lineWidth = lw;
+      dtCtx.lineCap = 'round';
+      dtCtx.beginPath();
+      dtCtx.moveTo(sx + ox, sy + oy);
+      dtCtx.lineTo(sx + ox + Math.cos(angle) * len, sy + oy + Math.sin(angle) * len * 0.4);
+      dtCtx.stroke();
+    });
+  }
+
+  const carDirtMap = new THREE.CanvasTexture(dtCanvas);
+  carDirtMap.colorSpace = THREE.NoColorSpace;
+  carDirtMap.wrapS = THREE.RepeatWrapping;
+  carDirtMap.wrapT = THREE.RepeatWrapping;
+  carDirtMap.anisotropy = aniso;
+
   return {
     asphaltMap,
     asphaltNormalMap,
@@ -882,6 +960,7 @@ export function createProceduralTextures(
     fernFrondMap,
     grassTuftMap,
     cloudMap,
+    carDirtMap,
     dispose: () => {
       asphaltMap.dispose();
       asphaltNormalMap.dispose();
@@ -904,6 +983,7 @@ export function createProceduralTextures(
       fernFrondMap.dispose();
       grassTuftMap.dispose();
       cloudMap.dispose();
+      carDirtMap.dispose();
     },
   };
 }

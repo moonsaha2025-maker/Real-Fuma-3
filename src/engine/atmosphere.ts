@@ -14,6 +14,7 @@ export interface AtmosphereLightingState {
   exposure: number;
   bloomStrength: number;
   nightFactor: number; // 0 = bright day, 1 = deep night
+  dayFactor: number; // 1 = bright day, 0 = night
   sunElevation: number; // -1..+1
   derivedTimeOfDay: TimeOfDay;
 }
@@ -53,16 +54,16 @@ interface SkyKeyframe {
 const SKY_KEYFRAMES: SkyKeyframe[] = [
   {
     phase: 0.0, // Pitch-Dark Midnight (00:00)
-    top: '#000103',
-    mid: '#010308',
-    horizon: '#02050d',
+    top: '#000001',
+    mid: '#000104',
+    horizon: '#01030a',
     sunCol: '#94a3b8',
-    hemiSky: '#050c1d',
-    hemiGround: '#010204',
-    fog: '#010206',
-    oceanDeep: '#010409',
-    oceanShallow: '#020b15',
-    cloud: '#050811',
+    hemiSky: '#02050d',
+    hemiGround: '#000102',
+    fog: '#000104',
+    oceanDeep: '#000206',
+    oceanShallow: '#010710',
+    cloud: '#02040a',
   },
   {
     phase: 0.21, // Pre-dawn twilight (05:00)
@@ -157,16 +158,16 @@ const SKY_KEYFRAMES: SkyKeyframe[] = [
   },
   {
     phase: 1.0, // Pitch-Dark Midnight Wrap (24:00)
-    top: '#000103',
-    mid: '#010308',
-    horizon: '#02050d',
+    top: '#000001',
+    mid: '#000104',
+    horizon: '#01030a',
     sunCol: '#94a3b8',
-    hemiSky: '#050c1d',
-    hemiGround: '#010204',
-    fog: '#010206',
-    oceanDeep: '#010409',
-    oceanShallow: '#020b15',
-    cloud: '#050811',
+    hemiSky: '#02050d',
+    hemiGround: '#000102',
+    fog: '#000104',
+    oceanDeep: '#000206',
+    oceanShallow: '#010710',
+    cloud: '#02040a',
   },
 ];
 
@@ -211,10 +212,11 @@ export function createAtmosphereSystem(
     hemiGroundColor: new THREE.Color('#334155'),
     hemiIntensity: 0.72,
     fogColor: new THREE.Color('#a4e4ff'),
-    envIntensity: 0.78,
-    exposure: 0.88,
-    bloomStrength: 0,
+    envIntensity: 1.05,
+    exposure: 1.02,
+    bloomStrength: 0.06,
     nightFactor: 0,
+    dayFactor: 1,
     sunElevation: 0.72,
     derivedTimeOfDay: 'day',
   };
@@ -521,33 +523,34 @@ export function createAtmosphereSystem(
         cloudMat.color.lerp(_overcastCloud, weatherMute);
       }
 
-      // Active directional shadow caster smoothly switches between Sun (day) and faint Moon (night)
+      // Active directional shadow caster smoothly switches between radiant Sun (day) and faint Moon (night)
       const useMoon = rawSunY < 0.03;
       if (useMoon) {
         sunDirection.copy(_moonDir);
         state.keyColor.copy(_moonLightColor);
         const moonWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, -0.14);
         state.keyIntensity =
-          THREE.MathUtils.lerp(0.24, 0.095, moonWeight) * (1 - weatherMute * 0.55);
+          THREE.MathUtils.lerp(0.18, 0.042, moonWeight) * (1 - weatherMute * 0.65);
       } else {
         sunDirection.copy(_sunTrueDir);
         state.keyColor.copy(skyUniforms.uSunColor.value);
-        const sunWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, 0.22);
+        const sunWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, 0.24);
         state.keyIntensity =
-          THREE.MathUtils.lerp(0.45, 2.08, sunWeight) * (1 - weatherMute * 0.42);
+          THREE.MathUtils.lerp(0.55, 2.58, sunWeight) * (1 - weatherMute * 0.45);
       }
 
       state.keyDirection.copy(sunDirection);
       state.sunElevation = rawSunY;
       state.nightFactor = nightFactor;
+      state.dayFactor = dayVis * (1 - weatherMute * 0.4);
       state.hemiIntensity =
-        THREE.MathUtils.lerp(0.56, 0.028, nightFactor) * (1 - weatherMute * 0.15);
-      state.envIntensity = THREE.MathUtils.lerp(0.82, 0.032, nightFactor);
+        THREE.MathUtils.lerp(0.68, 0.008, nightFactor) * (1 - weatherMute * 0.16);
+      state.envIntensity = THREE.MathUtils.lerp(1.08, 0.007, nightFactor);
       state.exposure =
-        THREE.MathUtils.lerp(0.92, 0.72, nightFactor) - goldenBand * 0.05;
+        THREE.MathUtils.lerp(1.04, 0.64, nightFactor) - goldenBand * 0.06;
       state.bloomStrength = Math.max(
-        nightFactor * 0.3,
-        goldenBand * 0.1,
+        nightFactor * 0.36,
+        goldenBand * 0.14,
       );
 
       // Derive discrete TimeOfDay label cleanly for UI/headlights

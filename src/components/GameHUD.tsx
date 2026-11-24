@@ -1,8 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Camera, MapPin, Pause, Wrench } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Aperture,
+  Camera,
+  Gamepad2,
+  MapPin,
+  Pause,
+  Wrench,
+} from 'lucide-react';
 import { TRACK_STATIONS } from '../data/track';
 import {
   ControlInputState,
+  ControlScheme,
   GameSettings,
   LiveTelemetry,
   MapLandmark,
@@ -15,11 +23,20 @@ interface GameHUDProps {
   onTouchInput: (patch: Partial<ControlInputState>) => void;
   onShiftGear: (delta: -1 | 1) => void;
   onCycleCamera: () => void;
+  onCycleControlScheme: () => void;
+  onEnterPhotoMode: () => void;
   onOpenMap: () => void;
   onPause: () => void;
   onInteractLandmark: (lm: MapLandmark) => void;
   onStartNearbyEvent: (evt: RaceEvent) => void;
 }
+
+const SCHEME_LABELS: Record<ControlScheme, string> = {
+  buttons: 'TOUCH PAD',
+  wheel: 'WHEEL',
+  tilt: 'GYRO',
+  keyboard: 'KEYS',
+};
 
 // Precompute static closed spline SVG paths once (negated XZ for starboard-right radar math)
 const RADAR_LOOP_PATH = (() => {
@@ -33,31 +50,165 @@ const RADAR_LOOP_PATH = (() => {
   return parts.join(' ');
 })();
 
+interface HoldButtonProps {
+  onHoldChange: (held: boolean) => void;
+  ariaLabel: string;
+  className: string;
+  activeClassName: string;
+  children: React.ReactNode;
+}
+
+const TouchHoldButton: React.FC<HoldButtonProps> = ({
+  onHoldChange,
+  ariaLabel,
+  className,
+  activeClassName,
+  children,
+}) => {
+  const [pressed, setPressed] = useState(false);
+  const pointerIdsRef = useRef<Set<number>>(new Set());
+  const latestOnHoldRef = useRef(onHoldChange);
+  latestOnHoldRef.current = onHoldChange;
+
+  const releasePointer = useCallback((pointerId?: number) => {
+    if (pointerId !== undefined) {
+      pointerIdsRef.current.delete(pointerId);
+    } else {
+      pointerIdsRef.current.clear();
+    }
+    if (pointerIdsRef.current.size === 0) {
+      setPressed(false);
+      latestOnHoldRef.current(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pointerIdsRef.current.size > 0) {
+        pointerIdsRef.current.clear();
+        latestOnHoldRef.current(false);
+      }
+    };
+  }, []);
+
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignore browsers rejecting synthetic pointer capture
+        }
+        pointerIdsRef.current.add(e.pointerId);
+        setPressed(true);
+        onHoldChange(true);
+      }}
+      onPointerUp={(e) => {
+        e.preventDefault();
+        releasePointer(e.pointerId);
+      }}
+      onPointerCancel={(e) => {
+        releasePointer(e.pointerId);
+      }}
+      onLostPointerCapture={(e) => {
+        releasePointer(e.pointerId);
+      }}
+      className={`${className} touch-none select-none cursor-pointer transition-colors ${
+        pressed ? activeClassName : ''
+      }`}
+    >
+      {children}
+    </button>
+  );
+};
+
 export const GameHUD: React.FC<GameHUDProps> = ({
   telemetry,
   settings,
   onTouchInput,
   onShiftGear,
   onCycleCamera,
+  onCycleControlScheme,
+  onEnterPhotoMode,
   onOpenMap,
   onPause,
   onInteractLandmark,
   onStartNearbyEvent,
 }) => {
   const [wheelAngle, setWheelAngle] = useState(0);
+  const [rockerSteer, setRockerSteer] = useState(0);
+  const [gyroSteer, setGyroSteer] = useState(0);
+  const [gyroNeedsPermission, setGyroNeedsPermission] = useState(() => {
+    const devOrient = window.DeviceOrientationEvent as
+      | (typeof DeviceOrientationEvent & {
+          requestPermission?: () => Promise<'granted' | 'denied'>;
+        })
+      | undefined;
+    return typeof devOrient?.requestPermission === 'function';
+  });
+
   const wheelRef = useRef<HTMLDivElement | null>(null);
-  const wheelDragging = useRef(false);
+  const wheelPointerId = useRef<number | null>(null);
+  const wheelStartRef = useRef<{ x: number; prevVal: number }>({
+    x: 0,
+    prevVal: 0,
+  });
+
+  const rockerRef = useRef<HTMLDivElement | null>(null);
+  const rockerPointerId = useRef<number | null>(null);
 
   useEffect(() => {
-    if (settings.controlScheme !== 'tilt') return;
+    if (settings.controlScheme !== 'tilt' || gyroNeedsPermission) {
+      setGyroSteer(0);
+      return;
+    }
     const handleOrient = (ev: DeviceOrientationEvent) => {
       if (ev.gamma == null) return;
-      const steer = Math.max(-1, Math.min(1, ev.gamma / 32));
+      const deadzone = 3.5;
+      const raw = ev.gamma;
+      const absG = Math.abs(raw);
+      let steer = 0;
+      if (absG > deadzone) {
+        steer = Math.sign(raw) * Math.min(1, (absG - deadzone) / 26);
+      }
+      setGyroSteer(steer);
       onTouchInput({ steer });
     };
     window.addEventListener('deviceorientation', handleOrient);
-    return () => window.removeEventListener('deviceorientation', handleOrient);
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrient);
+      onTouchInput({ steer: 0 });
+    };
+  }, [settings.controlScheme, gyroNeedsPermission, onTouchInput]);
+
+  // Reset touch steer cleanly whenever control scheme switches
+  useEffect(() => {
+    setWheelAngle(0);
+    setRockerSteer(0);
+    onTouchInput({ steer: 0 });
   }, [settings.controlScheme, onTouchInput]);
+
+  const requestGyroAccess = async () => {
+    const devOrient = window.DeviceOrientationEvent as
+      | (typeof DeviceOrientationEvent & {
+          requestPermission?: () => Promise<'granted' | 'denied'>;
+        })
+      | undefined;
+    if (typeof devOrient?.requestPermission === 'function') {
+      try {
+        const res = await devOrient.requestPermission();
+        if (res === 'granted') {
+          setGyroNeedsPermission(false);
+        }
+      } catch {
+        // User denied or unsupported context
+      }
+    }
+  };
 
   const displaySpeed =
     settings.units === 'MPH'
@@ -66,17 +217,45 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   const rpmPct = Math.min(1, telemetry.rpm / Math.max(1, telemetry.maxRpm));
 
-  const handleWheelPointer = (clientX: number, clientY: number) => {
+  // Continuous horizontal + arc steering wheel calculation without bottom-half flip bug
+  const updateWheelSteer = (clientX: number, clientY: number, isDown: boolean) => {
     if (!wheelRef.current) return;
     const rect = wheelRef.current.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
     const dx = clientX - cx;
     const dy = clientY - cy;
-    const ang = Math.atan2(dx, -dy);
-    const clamped = Math.max(-1.35, Math.min(1.35, ang));
-    setWheelAngle((clamped * 180) / Math.PI);
-    onTouchInput({ steer: clamped / 1.35 });
+
+    let norm = 0;
+    if (dy <= rect.height * 0.12) {
+      const ang = Math.atan2(dx, Math.max(14, -dy));
+      norm = Math.max(-1, Math.min(1, ang / 1.25));
+    } else {
+      norm = Math.max(-1, Math.min(1, dx / (rect.width * 0.55)));
+    }
+
+    if (isDown) {
+      wheelStartRef.current = { x: clientX, prevVal: norm };
+    }
+    setWheelAngle(norm * 105);
+    onTouchInput({ steer: norm });
+  };
+
+  // Unified slide-to-steer rocker: consistent full steer left/right, smooth bridge across center
+  const updateRockerSteer = (clientX: number) => {
+    if (!rockerRef.current) return;
+    const rect = rockerRef.current.getBoundingClientRect();
+    const rel = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+    let val = 0;
+    if (rel <= -0.14) {
+      val = -1;
+    } else if (rel >= 0.14) {
+      val = 1;
+    } else {
+      val = rel / 0.14;
+    }
+    setRockerSteer(val);
+    onTouchInput({ steer: val });
   };
 
   const scaleStyle = {
@@ -86,7 +265,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   const showTouchControls = settings.controlScheme !== 'keyboard';
 
   return (
-    <div className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-2.5 md:p-4 touch-none-game">
+    <div
+      className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-2.5 md:p-4 touch-none-game select-none"
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {telemetry.crashFlash > 0.03 && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 pointer-events-none"
+          style={{
+            opacity: Math.min(0.75, telemetry.crashFlash * 0.75),
+            background:
+              'radial-gradient(ellipse at center, transparent 52%, rgba(239, 68, 68, 0.34) 84%, rgba(249, 115, 22, 0.56) 100%)',
+          }}
+        />
+      )}
       {/* TOP BAR: Compact Translucent Radar Minimap + Top-Left FPS Meter + Race Status + Edge Buttons */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-1.5">
@@ -176,9 +369,31 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           )}
         </div>
 
-        {/* Top-Right: 3 Minimal Translucent Edge Buttons */}
+        {/* Top-Right: Minimal Translucent Edge Buttons + Quick Control Mode Switcher */}
         <div className="pointer-events-auto flex items-center gap-1.5">
           <button
+            type="button"
+            onClick={onCycleControlScheme}
+            title={`Input Mode: ${SCHEME_LABELS[settings.controlScheme]} (Tap to switch)`}
+            aria-label="Switch Control Mode"
+            className="h-8 md:h-9 px-2 bg-black/40 hover:bg-black/60 border border-white/15 text-white/90 flex items-center gap-1 cursor-pointer"
+          >
+            <Gamepad2 className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-[9px] font-display font-bold tracking-wider hidden sm:inline">
+              {SCHEME_LABELS[settings.controlScheme]}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={onEnterPhotoMode}
+            title="Photo Mode [P]"
+            aria-label="Enter Photo Mode"
+            className="w-8 h-8 md:w-9 md:h-9 bg-black/35 hover:bg-black/55 border border-white/15 text-white/90 flex items-center justify-center cursor-pointer"
+          >
+            <Aperture className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
             onClick={onCycleCamera}
             title={`Camera (${telemetry.cameraMode}) [C]`}
             aria-label="Switch Camera"
@@ -187,6 +402,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <Camera className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={onOpenMap}
             title="Track Map [M]"
             aria-label="Open Track Map"
@@ -195,6 +411,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <MapPin className="w-3.5 h-3.5" />
           </button>
           <button
+            type="button"
             onClick={onPause}
             title="Pause [Esc]"
             aria-label="Pause Game"
@@ -219,6 +436,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               {telemetry.nearEvent.title}
             </div>
             <button
+              type="button"
               onClick={() => onStartNearbyEvent(telemetry.nearEvent!)}
               className="bg-rose-600/90 hover:bg-rose-500 text-white px-3 py-1 text-[11px] font-display font-bold tracking-wider cursor-pointer"
             >
@@ -233,6 +451,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               {telemetry.nearLandmark.name}
             </div>
             <button
+              type="button"
               onClick={() => onInteractLandmark(telemetry.nearLandmark!)}
               className="bg-emerald-600/90 hover:bg-emerald-500 text-white px-3 py-1 text-[11px] font-display font-bold flex items-center gap-1 cursor-pointer"
             >
@@ -242,7 +461,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
         )}
       </div>
 
-      {/* BOTTOM BAR: Slim Translucent Edge Controls + Compact Speed Readout */}
+      {/* BOTTOM BAR: Ergonomic Multi-Touch Edge Controls + Compact Speed Readout */}
       <div className="flex items-end justify-between gap-2">
         {showTouchControls ? (
           <div
@@ -253,67 +472,137 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               <div
                 ref={wheelRef}
                 onPointerDown={(e) => {
-                  wheelDragging.current = true;
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  handleWheelPointer(e.clientX, e.clientY);
+                  e.preventDefault();
+                  wheelPointerId.current = e.pointerId;
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {
+                    // Ignore capture failures
+                  }
+                  updateWheelSteer(e.clientX, e.clientY, true);
                 }}
                 onPointerMove={(e) => {
-                  if (wheelDragging.current) {
-                    handleWheelPointer(e.clientX, e.clientY);
+                  if (wheelPointerId.current === e.pointerId) {
+                    updateWheelSteer(e.clientX, e.clientY, false);
                   }
                 }}
-                onPointerUp={() => {
-                  wheelDragging.current = false;
-                  setWheelAngle(0);
-                  onTouchInput({ steer: 0 });
+                onPointerUp={(e) => {
+                  if (wheelPointerId.current === e.pointerId) {
+                    wheelPointerId.current = null;
+                    setWheelAngle(0);
+                    onTouchInput({ steer: 0 });
+                  }
                 }}
                 onPointerCancel={() => {
-                  wheelDragging.current = false;
+                  wheelPointerId.current = null;
                   setWheelAngle(0);
                   onTouchInput({ steer: 0 });
                 }}
-                className="w-24 h-24 rounded-full bg-black/30 border-2 border-white/25 flex items-center justify-center cursor-grab active:cursor-grabbing"
+                onLostPointerCapture={() => {
+                  wheelPointerId.current = null;
+                  setWheelAngle(0);
+                  onTouchInput({ steer: 0 });
+                }}
+                className="w-28 h-28 rounded-full bg-black/40 border-2 border-white/30 flex items-center justify-center touch-none select-none cursor-grab active:cursor-grabbing relative"
                 style={{ transform: `rotate(${wheelAngle}deg)` }}
               >
-                <div className="w-20 h-1.5 bg-rose-500/80" />
-                <div className="w-4 h-4 rounded-full bg-white/80 border border-black absolute" />
+                <div className="w-24 h-2 bg-rose-500/85" />
+                <div className="w-2 h-5 bg-rose-400 absolute top-1" />
+                <div className="w-5 h-5 rounded-full bg-white/85 border border-black absolute" />
               </div>
             ) : settings.controlScheme === 'tilt' ? (
-              <div className="bg-black/35 border border-white/15 px-2.5 py-1 text-[9px] font-display text-white/75">
-                TILT STEER
+              <div className="bg-black/45 border border-white/20 px-3 py-2 space-y-1.5 min-w-[116px]">
+                {gyroNeedsPermission ? (
+                  <button
+                    type="button"
+                    onClick={requestGyroAccess}
+                    className="w-full bg-rose-600 hover:bg-rose-500 text-white font-display font-bold text-[10px] py-1.5 px-2 cursor-pointer"
+                  >
+                    ENABLE GYRO
+                  </button>
+                ) : (
+                  <>
+                    <div className="text-[9px] font-display tracking-wider text-white/80 text-center">
+                      TILT STEER ACTIVE
+                    </div>
+                    <div className="h-1.5 bg-white/15 relative overflow-hidden">
+                      <div
+                        className="absolute top-0 bottom-0 w-3 bg-rose-500 -translate-x-1/2"
+                        style={{ left: `${50 + gyroSteer * 45}%` }}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
-              <div className="flex gap-1.5">
-                <button
-                  onPointerDown={() => onTouchInput({ steer: -1 })}
-                  onPointerUp={() => onTouchInput({ steer: 0 })}
-                  onPointerLeave={() => onTouchInput({ steer: 0 })}
-                  onPointerCancel={() => onTouchInput({ steer: 0 })}
-                  aria-label="Steer Left"
-                  className="w-12 h-12 bg-black/35 active:bg-rose-600/65 border border-white/15 text-white/90 font-display text-base flex items-center justify-center"
+              /* Unified Slide-to-Steer Rocker: tap ◀ / ▶ OR slide thumb smoothly across center */
+              <div
+                ref={rockerRef}
+                role="group"
+                aria-label="Steering Pad"
+                onContextMenu={(e) => e.preventDefault()}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  rockerPointerId.current = e.pointerId;
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {
+                    // Ignore capture failures
+                  }
+                  updateRockerSteer(e.clientX);
+                }}
+                onPointerMove={(e) => {
+                  if (rockerPointerId.current === e.pointerId) {
+                    updateRockerSteer(e.clientX);
+                  }
+                }}
+                onPointerUp={(e) => {
+                  if (rockerPointerId.current === e.pointerId) {
+                    rockerPointerId.current = null;
+                    setRockerSteer(0);
+                    onTouchInput({ steer: 0 });
+                  }
+                }}
+                onPointerCancel={() => {
+                  rockerPointerId.current = null;
+                  setRockerSteer(0);
+                  onTouchInput({ steer: 0 });
+                }}
+                onLostPointerCapture={() => {
+                  rockerPointerId.current = null;
+                  setRockerSteer(0);
+                  onTouchInput({ steer: 0 });
+                }}
+                className="flex items-stretch gap-1.5 touch-none select-none cursor-pointer"
+              >
+                <div
+                  className={`w-16 h-16 border flex items-center justify-center font-display text-lg transition-colors ${
+                    rockerSteer < -0.1
+                      ? 'bg-rose-600/75 border-rose-300 text-white'
+                      : 'bg-black/40 border-white/20 text-white/90'
+                  }`}
                 >
                   ◀
-                </button>
-                <button
-                  onPointerDown={() => onTouchInput({ steer: 1 })}
-                  onPointerUp={() => onTouchInput({ steer: 0 })}
-                  onPointerLeave={() => onTouchInput({ steer: 0 })}
-                  onPointerCancel={() => onTouchInput({ steer: 0 })}
-                  aria-label="Steer Right"
-                  className="w-12 h-12 bg-black/35 active:bg-rose-600/65 border border-white/15 text-white/90 font-display text-base flex items-center justify-center"
+                </div>
+                <div
+                  className={`w-16 h-16 border flex items-center justify-center font-display text-lg transition-colors ${
+                    rockerSteer > 0.1
+                      ? 'bg-rose-600/75 border-rose-300 text-white'
+                      : 'bg-black/40 border-white/20 text-white/90'
+                  }`}
                 >
                   ▶
-                </button>
+                </div>
               </div>
             )}
           </div>
         ) : (
-          <div className="hidden lg:block bg-black/30 border border-white/10 px-2.5 py-1 text-[9px] font-display tracking-wider text-white/65">
-            WASD DRIVE · SPACE DRIFT · SHIFT NOS · R RESET
+          <div className="hidden md:block bg-black/35 border border-white/10 px-2.5 py-1 text-[9px] font-display tracking-wider text-white/70">
+            WASD / ARROWS DRIVE · SPACE DRIFT · SHIFT NOS · C CAM · R RESET
           </div>
         )}
 
-        {/* Bottom-Right: Compact Speedometer + Live NOS/Drift Readout + Touch Pedals */}
+        {/* Bottom-Right: Compact Speedometer + Live NOS/Drift Readout + Multi-Touch Pedals */}
         <div className="flex items-end gap-1.5 ml-auto">
           <div className="bg-black/40 border border-white/15 px-2.5 py-1.5 min-w-[90px] space-y-1">
             <div className="flex items-baseline justify-between gap-2">
@@ -353,65 +642,69 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
           {showTouchControls && (
             <div
-              className="pointer-events-auto flex items-end gap-1 origin-bottom-right"
+              className="pointer-events-auto flex items-end gap-1.5 origin-bottom-right"
               style={scaleStyle}
             >
               {settings.transmission === 'manual' && (
                 <div className="flex flex-col gap-1">
                   <button
-                    onPointerDown={() => onShiftGear(1)}
-                    className="w-9 h-7 bg-black/35 active:bg-white/25 border border-white/15 text-white/90 font-display font-bold text-[10px]"
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      onShiftGear(1);
+                    }}
+                    className="w-10 h-8 bg-black/40 active:bg-white/25 border border-white/20 text-white/90 font-display font-bold text-[10px] touch-none select-none cursor-pointer"
                   >
                     +G
                   </button>
                   <button
-                    onPointerDown={() => onShiftGear(-1)}
-                    className="w-9 h-7 bg-black/35 active:bg-white/25 border border-white/15 text-white/90 font-display font-bold text-[10px]"
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      onShiftGear(-1);
+                    }}
+                    className="w-10 h-8 bg-black/40 active:bg-white/25 border border-white/20 text-white/90 font-display font-bold text-[10px] touch-none select-none cursor-pointer"
                   >
                     -G
                   </button>
                 </div>
               )}
 
-              <div className="flex flex-col gap-1">
-                <button
-                  onPointerDown={() => onTouchInput({ nitro: true })}
-                  onPointerUp={() => onTouchInput({ nitro: false })}
-                  onPointerLeave={() => onTouchInput({ nitro: false })}
-                  onPointerCancel={() => onTouchInput({ nitro: false })}
-                  className="w-11 h-8 bg-sky-500/35 active:bg-sky-400/70 border border-sky-300/35 text-white/95 font-display font-bold text-[9px]"
+              <div className="flex flex-col gap-1.5">
+                <TouchHoldButton
+                  ariaLabel="Nitro Boost"
+                  onHoldChange={(held) => onTouchInput({ nitro: held })}
+                  className="w-12 h-9 bg-sky-500/40 border border-sky-300/40 text-white/95 font-display font-bold text-[10px]"
+                  activeClassName="bg-sky-400/80 border-sky-200"
                 >
                   NOS
-                </button>
-                <button
-                  onPointerDown={() => onTouchInput({ handbrake: true })}
-                  onPointerUp={() => onTouchInput({ handbrake: false })}
-                  onPointerLeave={() => onTouchInput({ handbrake: false })}
-                  onPointerCancel={() => onTouchInput({ handbrake: false })}
-                  className="w-11 h-8 bg-amber-500/35 active:bg-amber-400/70 border border-amber-300/35 text-white/95 font-display font-bold text-[9px]"
+                </TouchHoldButton>
+                <TouchHoldButton
+                  ariaLabel="Drift Handbrake"
+                  onHoldChange={(held) => onTouchInput({ handbrake: held })}
+                  className="w-12 h-9 bg-amber-500/40 border border-amber-300/40 text-white/95 font-display font-bold text-[10px]"
+                  activeClassName="bg-amber-400/80 border-amber-200 text-black"
                 >
                   DRIFT
-                </button>
+                </TouchHoldButton>
               </div>
 
-              <button
-                onPointerDown={() => onTouchInput({ brake: 1 })}
-                onPointerUp={() => onTouchInput({ brake: 0 })}
-                onPointerLeave={() => onTouchInput({ brake: 0 })}
-                onPointerCancel={() => onTouchInput({ brake: 0 })}
-                className="w-11 h-14 bg-black/35 active:bg-rose-600/60 border border-white/20 text-white/90 font-display font-bold text-[10px]"
+              <TouchHoldButton
+                ariaLabel="Brake and Reverse"
+                onHoldChange={(held) => onTouchInput({ brake: held ? 1 : 0 })}
+                className="w-13 h-16 bg-black/40 border border-white/25 text-white/95 font-display font-bold text-[11px]"
+                activeClassName="bg-rose-700/75 border-rose-300"
               >
                 BRK
-              </button>
-              <button
-                onPointerDown={() => onTouchInput({ throttle: 1 })}
-                onPointerUp={() => onTouchInput({ throttle: 0 })}
-                onPointerLeave={() => onTouchInput({ throttle: 0 })}
-                onPointerCancel={() => onTouchInput({ throttle: 0 })}
-                className="w-12 h-16 bg-rose-600/55 active:bg-rose-500/80 border border-white/25 text-white font-display font-bold text-[11px]"
+              </TouchHoldButton>
+              <TouchHoldButton
+                ariaLabel="Accelerate"
+                onHoldChange={(held) => onTouchInput({ throttle: held ? 1 : 0 })}
+                className="w-14 h-[74px] bg-rose-600/60 border border-white/30 text-white font-display font-bold text-xs"
+                activeClassName="bg-rose-500/90 border-white"
               >
                 GAS
-              </button>
+              </TouchHoldButton>
             </div>
           )}
         </div>

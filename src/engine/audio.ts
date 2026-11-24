@@ -1,10 +1,12 @@
-import { CarBaseSpec, GameSettings } from '../types/game';
+import { CarBaseSpec, GameSettings, RadioStationId } from '../types/game';
+import { radioEngine } from './radio';
 
 export class RacingAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private engineGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
+  private radioGain: GainNode | null = null;
 
   private oscPrimary: OscillatorNode | null = null;
   private oscSub: OscillatorNode | null = null;
@@ -12,7 +14,10 @@ export class RacingAudioEngine {
 
   private screechGain: GainNode | null = null;
   private screechFilter: BiquadFilterNode | null = null;
+  private scrapeGain: GainNode | null = null;
+  private scrapeFilter: BiquadFilterNode | null = null;
   private noiseSource: AudioBufferSourceNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
 
   private nitroJetGain: GainNode | null = null;
   private nitroJetFilter: BiquadFilterNode | null = null;
@@ -27,6 +32,8 @@ export class RacingAudioEngine {
   private masterVol = 0.75;
   private engineVol = 0.85;
   private sfxVol = 0.8;
+  private radioVol = 0.55;
+  private radioStation: RadioStationId = 'horizon_fm';
   private profile: CarBaseSpec['engineSoundProfile'] = 'i6_turbo';
 
   public init(): void {
@@ -59,6 +66,10 @@ export class RacingAudioEngine {
       this.sfxGain.gain.value = this.sfxVol;
       this.sfxGain.connect(this.masterGain);
 
+      this.radioGain = ctx.createGain();
+      this.radioGain.gain.value = this.radioVol;
+      this.radioGain.connect(this.masterGain);
+
       // Engine harmonic oscillator pair through resonant lowpass filter
       this.engineFilter = ctx.createBiquadFilter();
       this.engineFilter.type = 'lowpass';
@@ -86,6 +97,7 @@ export class RacingAudioEngine {
         output[i] = Math.random() * 2 - 1;
       }
 
+      this.noiseBuffer = noiseBuffer;
       this.noiseSource = ctx.createBufferSource();
       this.noiseSource.buffer = noiseBuffer;
       this.noiseSource.loop = true;
@@ -101,6 +113,17 @@ export class RacingAudioEngine {
       this.noiseSource.connect(this.screechFilter);
       this.screechFilter.connect(this.screechGain);
       this.screechGain.connect(this.sfxGain);
+
+      // Continuous metallic guardrail grind / scrape noise channel
+      this.scrapeFilter = ctx.createBiquadFilter();
+      this.scrapeFilter.type = 'bandpass';
+      this.scrapeFilter.frequency.value = 1750;
+      this.scrapeFilter.Q.value = 2.4;
+      this.scrapeGain = ctx.createGain();
+      this.scrapeGain.gain.value = 0;
+      this.noiseSource.connect(this.scrapeFilter);
+      this.scrapeFilter.connect(this.scrapeGain);
+      this.scrapeGain.connect(this.sfxGain);
 
       // Pressurized Nitrous Oxide Jet Roar + High-RPM Turbo Spool
       this.nitroJetFilter = ctx.createBiquadFilter();
@@ -135,6 +158,8 @@ export class RacingAudioEngine {
       this.sirenOsc.start();
 
       this.initialized = true;
+      radioEngine.attach(ctx, this.radioGain, this.noiseBuffer);
+      radioEngine.setStation(this.radioStation, false);
     } catch {
       // AudioContext creation failed or blocked
     }
@@ -145,6 +170,11 @@ export class RacingAudioEngine {
     this.masterVol = settings.masterVolume;
     this.engineVol = settings.engineVolume;
     this.sfxVol = settings.sfxVolume;
+    this.radioVol = settings.radioVolume ?? 0.55;
+    const prevStation = this.radioStation;
+    this.radioStation = settings.radioStation ?? 'horizon_fm';
+
+    radioEngine.setStation(this.radioStation, prevStation !== this.radioStation && this.initialized);
 
     if (!this.ctx || !this.masterGain || !this.sfxGain) return;
     const now = this.ctx.currentTime;
@@ -154,6 +184,7 @@ export class RacingAudioEngine {
       0.04,
     );
     this.sfxGain.gain.setTargetAtTime(this.sfxVol, now, 0.04);
+    this.radioGain?.gain.setTargetAtTime(this.radioVol, now, 0.04);
   }
 
   public setEngineProfile(profile: CarBaseSpec['engineSoundProfile']): void {
@@ -184,6 +215,7 @@ export class RacingAudioEngine {
     maxRpm: number;
     throttle: number;
     driftIntensity: number; // 0..1
+    railScrape?: number; // 0..1
     nitroActive: boolean;
     policeActive: boolean;
     policeDistanceM: number;
@@ -196,6 +228,7 @@ export class RacingAudioEngine {
     if (!params.active) {
       this.engineGain?.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain?.gain.setTargetAtTime(0, now, 0.08);
+      this.scrapeGain?.gain.setTargetAtTime(0, now, 0.06);
       this.nitroJetGain?.gain.setTargetAtTime(0, now, 0.06);
       this.turboGain?.gain.setTargetAtTime(0, now, 0.06);
       this.sirenGain?.gain.setTargetAtTime(0, now, 0.08);
@@ -231,6 +264,13 @@ export class RacingAudioEngine {
     this.screechGain?.gain.setTargetAtTime(screechLvl, now, 0.035);
     if (this.screechFilter) {
       this.screechFilter.frequency.setTargetAtTime(1020 + params.driftIntensity * 680, now, 0.045);
+    }
+
+    // Metallic barrier scrape grind
+    const scrapeVal = Math.min(1, Math.max(0, params.railScrape ?? 0));
+    this.scrapeGain?.gain.setTargetAtTime(scrapeVal * 0.22, now, 0.03);
+    if (this.scrapeFilter && scrapeVal > 0.02) {
+      this.scrapeFilter.frequency.setTargetAtTime(1450 + scrapeVal * 950, now, 0.04);
     }
 
     // Nitrous jet thrust roar + turbo spool whistle
@@ -270,21 +310,84 @@ export class RacingAudioEngine {
     osc.stop(now + 0.1);
   }
 
-  public playCollision(intensity: number): void {
+  public playCollision(
+    intensity: number,
+    kind: 'rail' | 'car' | 'landing' = 'rail',
+  ): void {
     if (!this.initialized || !this.ctx || !this.sfxGain) return;
     const now = this.ctx.currentTime;
-    const clamped = Math.min(1, Math.max(0.15, intensity));
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(110 * clamped + 40, now);
-    osc.frequency.exponentialRampToValueAtTime(28, now + 0.18);
-    gain.gain.setValueAtTime(0.32 * clamped, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-    osc.connect(gain);
-    gain.connect(this.sfxGain);
-    osc.start(now);
-    osc.stop(now + 0.22);
+    const clamped = Math.min(1.25, Math.max(0.14, intensity));
+
+    // 1. Heavy Sub-Bass Chassis Mass Thud
+    const subOsc = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(92 * Math.min(1, clamped) + 46, now);
+    subOsc.frequency.exponentialRampToValueAtTime(24, now + 0.24);
+    subGain.gain.setValueAtTime(0.42 * Math.min(1.1, clamped), now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+    subOsc.connect(subGain);
+    subGain.connect(this.sfxGain);
+    subOsc.start(now);
+    subOsc.stop(now + 0.28);
+
+    if (kind === 'landing') return;
+
+    // 2. Crunching Sheet-Metal & Structural Impact Noise Burst
+    if (this.noiseBuffer) {
+      const crunchSrc = this.ctx.createBufferSource();
+      crunchSrc.buffer = this.noiseBuffer;
+
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(kind === 'car' ? 680 : 940, now);
+      bp.frequency.exponentialRampToValueAtTime(240, now + 0.28);
+      bp.Q.value = 1.4;
+
+      const crunchGain = this.ctx.createGain();
+      crunchGain.gain.setValueAtTime(0.36 * clamped, now);
+      crunchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+
+      crunchSrc.connect(bp);
+      bp.connect(crunchGain);
+      crunchGain.connect(this.sfxGain);
+      crunchSrc.start(now);
+      crunchSrc.stop(now + 0.36);
+
+      // 3. Shattered Glass & Debris Scatter Clatter on medium/heavy crashes
+      if (clamped > 0.34) {
+        const glassSrc = this.ctx.createBufferSource();
+        glassSrc.buffer = this.noiseBuffer;
+
+        const hp = this.ctx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.setValueAtTime(3600, now);
+
+        const glassGain = this.ctx.createGain();
+        glassGain.gain.setValueAtTime(0.001, now);
+        glassGain.gain.linearRampToValueAtTime(0.18 * clamped, now + 0.03);
+        glassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+
+        glassSrc.connect(hp);
+        hp.connect(glassGain);
+        glassGain.connect(this.sfxGain);
+        glassSrc.start(now + 0.02);
+        glassSrc.stop(now + 0.45);
+      }
+    }
+
+    // 4. Metallic Ring / Guardrail Clang
+    const clangOsc = this.ctx.createOscillator();
+    const clangGain = this.ctx.createGain();
+    clangOsc.type = 'triangle';
+    clangOsc.frequency.setValueAtTime(kind === 'rail' ? 390 : 285, now);
+    clangOsc.frequency.exponentialRampToValueAtTime(115, now + 0.19);
+    clangGain.gain.setValueAtTime(0.16 * clamped, now);
+    clangGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    clangOsc.connect(clangGain);
+    clangGain.connect(this.sfxGain);
+    clangOsc.start(now);
+    clangOsc.stop(now + 0.22);
   }
 
   public playCountdownBeep(isGo: boolean): void {
@@ -318,7 +421,93 @@ export class RacingAudioEngine {
     osc.stop(now + 0.055);
   }
 
+  public playCarWash(durationSec = 3.2): void {
+    this.init();
+    if (!this.initialized || !this.ctx || !this.sfxGain || !this.noiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    // High-pressure water jet & soap foam hiss
+    const spraySrc = this.ctx.createBufferSource();
+    spraySrc.buffer = this.noiseBuffer;
+    spraySrc.loop = true;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 0.85;
+    filter.frequency.setValueAtTime(950, now);
+    filter.frequency.linearRampToValueAtTime(2400, now + durationSec * 0.35);
+    filter.frequency.linearRampToValueAtTime(1650, now + durationSec * 0.72);
+    filter.frequency.linearRampToValueAtTime(3100, now + durationSec * 0.92);
+
+    const sprayGain = this.ctx.createGain();
+    sprayGain.gain.setValueAtTime(0.001, now);
+    sprayGain.gain.linearRampToValueAtTime(0.24, now + 0.16);
+    sprayGain.gain.setValueAtTime(0.21, now + durationSec * 0.45);
+    sprayGain.gain.linearRampToValueAtTime(0.26, now + durationSec * 0.65);
+    sprayGain.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+
+    spraySrc.connect(filter);
+    filter.connect(sprayGain);
+    sprayGain.connect(this.sfxGain);
+    spraySrc.start(now);
+    spraySrc.stop(now + durationSec + 0.05);
+
+    // Subtle spotless completion shimmer chime
+    const chimeTime = now + durationSec - 0.32;
+    for (const [idx, freq] of [1046.5, 1318.5].entries()) {
+      const osc = this.ctx.createOscillator();
+      const cg = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, chimeTime + idx * 0.09);
+      cg.gain.setValueAtTime(0.001, chimeTime + idx * 0.09);
+      cg.gain.linearRampToValueAtTime(0.11, chimeTime + idx * 0.09 + 0.03);
+      cg.gain.exponentialRampToValueAtTime(0.001, chimeTime + idx * 0.09 + 0.38);
+      osc.connect(cg);
+      cg.connect(this.sfxGain);
+      osc.start(chimeTime + idx * 0.09);
+      osc.stop(chimeTime + idx * 0.09 + 0.4);
+    }
+  }
+
+  public playShutterClick(): void {
+    this.init();
+    if (!this.initialized || !this.ctx || !this.sfxGain || !this.noiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    // Mechanical mirror slap + crisp high-frequency shutter snap
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(3400, now);
+    bp.Q.value = 1.6;
+
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.28, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this.sfxGain);
+    src.start(now);
+    src.stop(now + 0.06);
+
+    const osc = this.ctx.createOscillator();
+    const og = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1250, now + 0.015);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.065);
+    og.gain.setValueAtTime(0.14, now + 0.015);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+    osc.connect(og);
+    og.connect(this.sfxGain);
+    osc.start(now + 0.015);
+    osc.stop(now + 0.075);
+  }
+
   public dispose(): void {
+    radioEngine.dispose();
     try {
       this.oscPrimary?.stop();
       this.oscSub?.stop();

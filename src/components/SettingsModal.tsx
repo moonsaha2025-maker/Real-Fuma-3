@@ -269,11 +269,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <div className="flex justify-between text-[10px] font-display text-slate-400 mb-1">
                   <span>MASTER VOLUME</span>
-                  <span className="font-mono-num">
+                  <span className="font-mono-num tabular-nums">
                     {Math.round(settings.masterVolume * 100)}%
                   </span>
                 </div>
@@ -292,7 +292,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div>
                 <div className="flex justify-between text-[10px] font-display text-slate-400 mb-1">
                   <span>ENGINE & EXHAUST</span>
-                  <span className="font-mono-num">
+                  <span className="font-mono-num tabular-nums">
                     {Math.round(settings.engineVolume * 100)}%
                   </span>
                 </div>
@@ -311,7 +311,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div>
                 <div className="flex justify-between text-[10px] font-display text-slate-400 mb-1">
                   <span>TIRES, WIND & SFX</span>
-                  <span className="font-mono-num">
+                  <span className="font-mono-num tabular-nums">
                     {Math.round(settings.sfxVolume * 100)}%
                   </span>
                 </div>
@@ -323,6 +323,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={settings.sfxVolume}
                   onChange={(e) =>
                     onUpdate({ sfxVolume: parseFloat(e.target.value) })
+                  }
+                  className="w-full accent-rose-600 cursor-pointer"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-[10px] font-display text-slate-400 mb-1">
+                  <span>RADIO STATIONS</span>
+                  <span className="font-mono-num tabular-nums">
+                    {Math.round(settings.radioVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={settings.radioVolume}
+                  onChange={(e) =>
+                    onUpdate({ radioVolume: parseFloat(e.target.value) })
                   }
                   className="w-full accent-rose-600 cursor-pointer"
                 />

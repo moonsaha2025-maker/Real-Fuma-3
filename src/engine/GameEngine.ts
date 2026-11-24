@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -27,6 +26,7 @@ import {
 import { AtmosphereSystem, createAtmosphereSystem } from './atmosphere';
 import { audioEngine } from './audio';
 import { CarModelRig, createCarModel } from './carModel';
+import { CrashEffectsSystem } from './crashEffects';
 import {
   createInitialPhysicsStateAtS,
   stepVehiclePhysics,
@@ -35,7 +35,7 @@ import {
 import { createProceduralTextures, ProceduralTexturePack } from './textures';
 import { TireSkidmarkSystem } from './skidmarks';
 import { TireSmokeSystem } from './tireSmoke';
-import { TrafficAndAIManager } from './trafficAndAI';
+import { CarHeadlightTarget, TrafficAndAIManager } from './trafficAndAI';
 import { buildRealFumaWorld, BuiltWorld } from './worldBuilder';
 
 export const SHOWCASE_S = 0.06;
@@ -96,8 +96,8 @@ const _lightRight = new THREE.Vector3();
 const _lightUp = new THREE.Vector3();
 const _focusPt = new THREE.Vector3();
 
-const SHADOW_HALF_EXTENT = 26;
-const DEFAULT_SHADOW_MAP_RES = 2048;
+const SHADOW_HALF_EXTENT = 32;
+const DEFAULT_SHADOW_MAP_RES = 1536;
 
 function timePresetToPhase(time: TimeOfDay): number {
   if (time === 'sunrise') return 0.265;
@@ -126,10 +126,10 @@ function buildCoastalSkyEnvironmentTexture(): THREE.CanvasTexture {
   vGrad.addColorStop(0.24, '#29a8ff');
   vGrad.addColorStop(0.45, '#b8ebff');
   vGrad.addColorStop(0.50, '#ffffff');
-  vGrad.addColorStop(0.54, '#22d3ee');
-  vGrad.addColorStop(0.68, '#0b5c8a');
-  vGrad.addColorStop(0.84, '#1e293b');
-  vGrad.addColorStop(1.0, '#0f172a');
+  vGrad.addColorStop(0.54, '#38bdf8');
+  vGrad.addColorStop(0.68, '#23698f');
+  vGrad.addColorStop(0.85, '#3f4f63');
+  vGrad.addColorStop(1.0, '#2d3a4b');
   ctx.fillStyle = vGrad;
   ctx.fillRect(0, 0, 512, 256);
 
@@ -205,23 +205,40 @@ export class GameEngine {
 
   // Lighting
   private sunLight: THREE.DirectionalLight;
+  private skyFillLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
   private shadowTexelSize = (SHADOW_HALF_EXTENT * 2) / DEFAULT_SHADOW_MAP_RES;
-  private headlightSpot: THREE.SpotLight | null = null;
-  private exhaustLight: THREE.PointLight | null = null;
-  private softboxA: THREE.RectAreaLight | null = null;
-  private softboxB: THREE.RectAreaLight | null = null;
+  private headlightBeam: THREE.SpotLight;
+  private taillightLight: THREE.PointLight;
+  private streetLampLights: THREE.PointLight[] = [];
+  private trafficHeadlights: THREE.PointLight[] = [];
+  private nearestHeadlightTargets: CarHeadlightTarget[] = [];
+  private softboxA: THREE.DirectionalLight | null = null;
+  private softboxB: THREE.DirectionalLight | null = null;
   private showroomTurntable: THREE.Mesh;
 
-  // Weather & Additive Tire Smoke Particles
+  // Weather, Car Wash Spray, Crash VFX & Additive Tire Smoke Particles
   private rainPoints: THREE.Points;
   private rainPositions: Float32Array;
+  private washPoints: THREE.Points;
+  private washPositions: Float32Array;
+  private washVelocities: Float32Array;
+  private washSpriteTex: THREE.CanvasTexture;
   private tireSmoke: TireSmokeSystem;
   private skidmarks: TireSkidmarkSystem;
+  private crashEffects: CrashEffectsSystem;
+
+  // Vehicle Dirt & Garage Wash Animation State
+  private carDirtLevel = 0;
+  private washActive = false;
+  private washTimer = 0;
+  private washStartDirt = 0;
+  private readonly washDuration = 3.2;
 
   // State
   private mode: 'showcase' | 'drive' = 'showcase';
   private paused = false;
+  private photoMode = false;
   private contextLost = false;
   private settings: GameSettings;
   private weather: WeatherType = 'sunny';
@@ -233,12 +250,20 @@ export class GameEngine {
   private lightningTimer = 0;
   private lightningFlash = 0;
 
-  // Showcase Orbit
+  // Showcase & Photo Mode Orbit
   private showcasePt = getRoadPointAt(SHOWCASE_S, 0);
   private orbitYaw = this.showcasePt.heading + 0.56;
-  private orbitPitch = 0.16;
-  private orbitDist = 5.45;
+  private orbitPitch = 0.14;
+  private orbitDist = 4.15;
   private autoOrbit = true;
+  private photoYaw = 0.55;
+  private photoPitch = 0.14;
+  private photoDist = 4.1;
+  private photoHeight = 0.68;
+  private photoFov = 44;
+  private photoRollDeg = 0;
+  private photoBlurEnabled = false;
+  private photoBlurIntensity = 0.45;
 
   // Input
   private keysHeld = new Set<string>();
@@ -249,8 +274,15 @@ export class GameEngine {
     handbrake: false,
     nitro: false,
   };
+  private smoothedDigitalSteer = 0;
+  private gpPrevCamBtn = false;
+  private gamepadBlocked = false;
   private manualShiftQueue: -1 | 0 | 1 = 0;
   private cameraShakeIntensity = 0;
+  private cameraCrashRoll = 0;
+  private cameraCrashJoltX = 0;
+  private cameraCrashJoltZ = 0;
+  private crashFlash = 0;
   private hitstopTimer = 0;
 
   // Race & Event State
@@ -286,6 +318,8 @@ export class GameEngine {
     driftPts: number,
   ) => void;
   private onRegionUnlock?: (regionId: LiveTelemetry['regionId']) => void;
+  private onDirtChange?: (carId: string, dirtLevel: number) => void;
+  private onWashComplete?: () => void;
 
   constructor(
     container: HTMLElement,
@@ -303,6 +337,8 @@ export class GameEngine {
         driftPts: number,
       ) => void;
       onRegionUnlock: (regionId: LiveTelemetry['regionId']) => void;
+      onDirtChange?: (carId: string, dirtLevel: number) => void;
+      onWashComplete?: () => void;
     },
   ) {
     this.container = container;
@@ -311,6 +347,8 @@ export class GameEngine {
     this.onRaceComplete = callbacks.onRaceComplete;
     this.onFreeRoamReward = callbacks.onFreeRoamReward;
     this.onRegionUnlock = callbacks.onRegionUnlock;
+    this.onDirtChange = callbacks.onDirtChange;
+    this.onWashComplete = callbacks.onWashComplete;
 
     this.isSoftwareGl = detectSoftwareWebGL();
     this.renderer = new THREE.WebGLRenderer({
@@ -332,7 +370,7 @@ export class GameEngine {
     this.scene.fog = new THREE.FogExp2(0x9ee0ff, 0.00052);
 
     this.camera = new THREE.PerspectiveCamera(
-      52,
+      48,
       container.clientWidth / Math.max(1, container.clientHeight),
       0.2,
       2400,
@@ -346,51 +384,75 @@ export class GameEngine {
     coastalEnvTex.dispose();
     pmrem.dispose();
 
-    // Crisp coastal daylight rig + car-following texel-snapped 2048x2048 shadow frustum
-    this.hemiLight = new THREE.HemisphereLight(0xc2ebff, 0x334155, 0.74);
+    // Crisp coastal daylight rig + cool sky bounce fill + car-following texel-snapped shadow frustum
+    this.hemiLight = new THREE.HemisphereLight(0xc8eeff, 0x3a4838, 0.68);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfffbeb, 2.05);
+    this.sunLight = new THREE.DirectionalLight(0xfffcf0, 2.45);
     this.sunLight.position.set(this.showcasePt.x - 95, 115, this.showcasePt.z - 80);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(DEFAULT_SHADOW_MAP_RES, DEFAULT_SHADOW_MAP_RES);
     this.sunLight.shadow.camera.near = 2;
-    this.sunLight.shadow.camera.far = 240;
+    this.sunLight.shadow.camera.far = 250;
     this.sunLight.shadow.camera.left = -SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.right = SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.top = SHADOW_HALF_EXTENT;
     this.sunLight.shadow.camera.bottom = -SHADOW_HALF_EXTENT;
     this.sunLight.shadow.bias = -0.00018;
     this.sunLight.shadow.normalBias = 0.012;
-    this.sunLight.shadow.radius = 1.35;
+    this.sunLight.shadow.radius = 1.45;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    // Dynamic Car Headlight Beam Spotlight (non-shadow-casting; illuminates pitch-dark night roads)
-    this.headlightSpot = new THREE.SpotLight(
-      0xf3f7ff,
-      0,
-      175,
-      Math.PI / 3.25,
-      0.56,
-      1.18,
-    );
-    this.headlightSpot.castShadow = false;
-    this.scene.add(this.headlightSpot);
-    this.scene.add(this.headlightSpot.target);
+    // Opposite-azimuth daytime cool atmospheric sky bounce light (off at night)
+    this.skyFillLight = new THREE.DirectionalLight(0x9fd8ff, 0.36);
+    this.skyFillLight.castShadow = false;
+    this.scene.add(this.skyFillLight);
+    this.scene.add(this.skyFillLight.target);
 
-    this.exhaustLight = new THREE.PointLight(0x38bdf8, 0, 14, 2);
-    this.scene.add(this.exhaustLight);
+    // Single wide soft-penumbra road-wash LED beam (no twin spotlight circles or floating cone hoops)
+    this.headlightBeam = new THREE.SpotLight(
+      0xf6f9ff,
+      0,
+      220,
+      Math.PI / 2.65,
+      1.0,
+      1.15,
+    );
+    this.headlightBeam.castShadow = false;
+    this.scene.add(this.headlightBeam);
+    this.scene.add(this.headlightBeam.target);
+
+    this.taillightLight = new THREE.PointLight(0xff2040, 0, 10, 1.9);
+    this.scene.add(this.taillightLight);
+
+    // Pooled warm-amber highway streetlamp lights & oncoming traffic headlights for pitch-dark night
+    for (let i = 0; i < 2; i++) {
+      const lamp = new THREE.PointLight(0xffba63, 0, 48, 1.45);
+      this.scene.add(lamp);
+      this.streetLampLights.push(lamp);
+    }
+    for (let i = 0; i < 1; i++) {
+      const thl = new THREE.PointLight(0xe4f0ff, 0, 46, 1.5);
+      this.scene.add(thl);
+      this.trafficHeadlights.push(thl);
+    }
 
     if (!this.isSoftwareGl) {
-      RectAreaLightUniformsLib.init();
-      this.softboxA = new THREE.RectAreaLight(0xffffff, 1.5, 9, 4);
+      // Lightweight studio fill/rim DirectionalLights replacing expensive RectAreaLight LTC shaders
+      this.softboxA = new THREE.DirectionalLight(0xffffff, 1.35);
+      this.softboxA.castShadow = false;
       this.softboxA.position.set(this.showcasePt.x - 5, this.showcasePt.y + 6.5, this.showcasePt.z + 7);
-      this.softboxA.lookAt(this.showcasePt.x, this.showcasePt.y + 0.7, this.showcasePt.z);
-      this.softboxB = new THREE.RectAreaLight(0x38bdf8, 1.0, 8, 3);
+      this.softboxA.target.position.set(this.showcasePt.x, this.showcasePt.y + 0.7, this.showcasePt.z);
+      this.softboxA.target.updateMatrixWorld();
+
+      this.softboxB = new THREE.DirectionalLight(0x7dd3fc, 0.85);
+      this.softboxB.castShadow = false;
       this.softboxB.position.set(this.showcasePt.x + 6, this.showcasePt.y + 5, this.showcasePt.z - 6);
-      this.softboxB.lookAt(this.showcasePt.x, this.showcasePt.y + 0.7, this.showcasePt.z);
-      this.scene.add(this.softboxA, this.softboxB);
+      this.softboxB.target.position.set(this.showcasePt.x, this.showcasePt.y + 0.7, this.showcasePt.z);
+      this.softboxB.target.updateMatrixWorld();
+
+      this.scene.add(this.softboxA, this.softboxA.target, this.softboxB, this.softboxB.target);
     }
 
     // Procedural Textures, Sky/Ocean Shader & Closed Spline Highway World
@@ -464,7 +526,43 @@ export class GameEngine {
     this.rainPoints.frustumCulled = false;
     this.scene.add(this.rainPoints);
 
-    // High-Fidelity Additive Tire Smoke & Asphalt Skidmark Systems
+    // Pooled Garage High-Pressure Water & Soap Foam Spray Particles
+    const wsCanvas = document.createElement('canvas');
+    wsCanvas.width = 64;
+    wsCanvas.height = 64;
+    const wsCtx = wsCanvas.getContext('2d')!;
+    const wsGrad = wsCtx.createRadialGradient(32, 32, 2, 32, 32, 30);
+    wsGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
+    wsGrad.addColorStop(0.45, 'rgba(224,242,254,0.65)');
+    wsGrad.addColorStop(1, 'rgba(186,230,253,0)');
+    wsCtx.fillStyle = wsGrad;
+    wsCtx.fillRect(0, 0, 64, 64);
+    this.washSpriteTex = new THREE.CanvasTexture(wsCanvas);
+    this.washSpriteTex.colorSpace = THREE.SRGBColorSpace;
+
+    const washCount = 240;
+    this.washPositions = new Float32Array(washCount * 3);
+    this.washVelocities = new Float32Array(washCount * 3);
+    const washGeo = new THREE.BufferGeometry();
+    washGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(this.washPositions, 3),
+    );
+    const washMat = new THREE.PointsMaterial({
+      color: 0xf0f9ff,
+      map: this.washSpriteTex,
+      size: 0.28,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    this.washPoints = new THREE.Points(washGeo, washMat);
+    this.washPoints.visible = false;
+    this.washPoints.frustumCulled = false;
+    this.scene.add(this.washPoints);
+
+    // High-Fidelity Additive Tire Smoke, Asphalt Skidmarks & Crash VFX Systems
     this.tireSmoke = new TireSmokeSystem(
       Math.max(1, container.clientHeight) * this.renderer.getPixelRatio(),
     );
@@ -472,6 +570,11 @@ export class GameEngine {
 
     this.skidmarks = new TireSkidmarkSystem();
     this.scene.add(this.skidmarks.mesh);
+
+    this.crashEffects = new CrashEffectsSystem(
+      Math.max(1, container.clientHeight) * this.renderer.getPixelRatio(),
+    );
+    this.scene.add(this.crashEffects.group);
 
     // Spawn player showcase vehicle cleanly on coastal highway overlook
     this.setPlayerCar(initialCar);
@@ -525,6 +628,10 @@ export class GameEngine {
 
   public setPlayerCar(carData: OwnedCarData): void {
     this.currentCarData = carData;
+    this.carDirtLevel = carData.dirtLevel ?? 0;
+    this.washActive = false;
+    this.washTimer = 0;
+    this.washPoints.visible = false;
     const spec = getCarSpec(carData.carId);
     audioEngine.setEngineProfile(spec.engineSoundProfile);
 
@@ -536,7 +643,9 @@ export class GameEngine {
     this.playerCarRig = createCarModel(spec, carData.customization, {
       contactShadowMap: this.textures.contactShadowMap,
       carbonMap: this.textures.carbonMap,
+      dirtMap: this.textures.carDirtMap,
     });
+    this.playerCarRig.setDirt(this.carDirtLevel, -1, 0);
     this.scene.add(this.playerCarRig.root);
     this.syncCarPoseToTrack();
   }
@@ -552,21 +661,21 @@ export class GameEngine {
     if (!this.isSoftwareGl) {
       const baseDpr = window.devicePixelRatio || 1;
       if (settings.graphicsPreset === 'LOW') {
-        dpr = 0.85;
+        dpr = 0.8;
         shadowEnabled = false;
-        farPlane = 1050;
+        farPlane = 950;
       } else if (settings.graphicsPreset === 'MEDIUM') {
-        dpr = Math.min(baseDpr, 1.25);
-        shadowRes = 2048;
-        farPlane = 1450;
+        dpr = Math.min(baseDpr, 1.0);
+        shadowRes = 1024;
+        farPlane = 1250;
       } else if (settings.graphicsPreset === 'HIGH') {
-        dpr = Math.min(baseDpr, 1.65);
-        shadowRes = 3072;
-        farPlane = 1900;
+        dpr = Math.min(baseDpr, 1.25);
+        shadowRes = 1536;
+        farPlane = 1550;
       } else {
-        dpr = Math.min(baseDpr, 2.0);
-        shadowRes = 4096;
-        farPlane = 2400;
+        dpr = Math.min(baseDpr, 1.6);
+        shadowRes = 2048;
+        farPlane = 1950;
       }
     }
     this.renderer.setPixelRatio(dpr);
@@ -594,9 +703,9 @@ export class GameEngine {
       this.composer.setPixelRatio(dpr);
       this.composer.setSize(w, h);
     }
-    this.tireSmoke.setViewportHeight(
-      Math.max(1, this.container.clientHeight) * dpr,
-    );
+    const pxH = Math.max(1, this.container.clientHeight) * dpr;
+    this.tireSmoke.setViewportHeight(pxH);
+    this.crashEffects.setViewportHeight(pxH);
     this.syncBloomStrength();
   }
 
@@ -604,8 +713,11 @@ export class GameEngine {
     if (!this.bloomPass) return;
     if (this.settings.graphicsPreset === 'LOW') {
       this.bloomPass.strength = 0;
+      this.bloomPass.enabled = false;
     } else {
-      this.bloomPass.strength = this.atmosphere.state.bloomStrength;
+      const str = this.atmosphere.state.bloomStrength;
+      this.bloomPass.strength = str;
+      this.bloomPass.enabled = str > 0.015;
     }
   }
 
@@ -644,7 +756,7 @@ export class GameEngine {
     else {
       // Slight atmospheric twilight mist near sunset/dawn + thick pitch-dark night horizon attenuation
       const goldenMist = Math.max(0, 1 - Math.abs(atm.sunElevation) * 4.2) * 0.00018;
-      fogDensity += goldenMist + atm.nightFactor * 0.00145;
+      fogDensity += goldenMist + atm.nightFactor * 0.00185;
     }
 
     if (this.scene.fog instanceof THREE.FogExp2) {
@@ -661,6 +773,15 @@ export class GameEngine {
 
     this.sunLight.color.copy(atm.keyColor);
     this.sunLight.intensity = atm.keyIntensity;
+    this.skyFillLight.intensity = atm.dayFactor * 0.38;
+    this.skyFillLight.position.set(
+      this.physics.x - atm.keyDirection.x * 70,
+      this.physics.y + 52,
+      this.physics.z - atm.keyDirection.z * 70,
+    );
+    this.skyFillLight.target.position.set(this.physics.x, this.physics.y, this.physics.z);
+    this.skyFillLight.target.updateMatrixWorld();
+
     this.hemiLight.color.copy(atm.hemiSkyColor);
     this.hemiLight.groundColor.copy(atm.hemiGroundColor);
     this.hemiLight.intensity = atm.hemiIntensity;
@@ -684,9 +805,10 @@ export class GameEngine {
   public setShowcaseMode(enabled: boolean): void {
     this.mode = enabled ? 'showcase' : 'drive';
     this.showroomTurntable.visible = enabled;
-    if (this.softboxA) this.softboxA.intensity = enabled ? 1.5 : 0;
-    if (this.softboxB) this.softboxB.intensity = enabled ? 1.0 : 0;
+    if (this.softboxA) this.softboxA.intensity = enabled ? 1.35 : 0;
+    if (this.softboxB) this.softboxB.intensity = enabled ? 0.85 : 0;
 
+    this.smoothedDigitalSteer = 0;
     if (enabled) {
       this.paused = false;
       this.activeEvent = null;
@@ -694,15 +816,24 @@ export class GameEngine {
       this.trafficAI.clearRacers();
       this.tireSmoke.clear();
       this.skidmarks.clear();
+      this.crashEffects.clear();
+      this.crashFlash = 0;
+      this.washActive = false;
+      this.washPoints.visible = false;
       this.physics = createInitialPhysicsStateAtS(SHOWCASE_S, 0);
       this.physics.y = this.showcasePt.y + 0.02;
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
       }
+      if (this.currentCarData) {
+        this.onDirtChange?.(this.currentCarData.carId, this.carDirtLevel);
+      }
       if (this.playerCarRig) {
         this.syncCarPoseToTrack();
         this.playerCarRig.setBodyTilt(0, 0, 0);
         this.playerCarRig.setLights(true, false, false);
+        this.playerCarRig.setDirt(this.carDirtLevel, -1, 0);
+        this.playerCarRig.setDamage(0);
       }
       audioEngine.updateContinuous({
         active: false,
@@ -715,7 +846,38 @@ export class GameEngine {
         policeDistanceM: 999,
         elapsedTime: 0,
       });
+    } else {
+      this.washActive = false;
+      this.washPoints.visible = false;
+      this.playerCarRig?.setDirt(this.carDirtLevel, -1, 0);
     }
+  }
+
+  public startCarWash(): boolean {
+    if (this.mode !== 'showcase' || !this.playerCarRig || this.washActive) {
+      return false;
+    }
+    this.washActive = true;
+    this.washTimer = 0;
+    this.washStartDirt = Math.max(0.06, this.carDirtLevel);
+
+    const cx = this.physics.x;
+    const cy = this.physics.y + 0.9;
+    const cz = this.physics.z;
+    for (let i = 0; i < this.washPositions.length; i += 3) {
+      const ang = Math.random() * Math.PI * 2;
+      const rad = 0.8 + Math.random() * 1.9;
+      this.washPositions[i] = cx + Math.cos(ang) * rad;
+      this.washPositions[i + 1] = cy + (Math.random() - 0.2) * 1.1;
+      this.washPositions[i + 2] = cz + Math.sin(ang) * rad;
+      this.washVelocities[i] = Math.cos(ang) * (0.8 + Math.random() * 1.2);
+      this.washVelocities[i + 1] = 0.6 + Math.random() * 1.1;
+      this.washVelocities[i + 2] = Math.sin(ang) * (0.8 + Math.random() * 1.2);
+    }
+    this.washPoints.geometry.attributes.position.needsUpdate = true;
+    this.washPoints.visible = true;
+    audioEngine.playCarWash(this.washDuration);
+    return true;
   }
 
   public adjustShowcaseOrbit(dx: number, dy: number, zoomDelta = 0): void {
@@ -728,16 +890,36 @@ export class GameEngine {
     );
     this.orbitDist = THREE.MathUtils.clamp(
       this.orbitDist + zoomDelta,
-      3.8,
-      11.5,
+      2.9,
+      8.5,
     );
   }
 
   public resetShowcaseOrbit(): void {
     this.autoOrbit = true;
     this.orbitYaw = this.showcasePt.heading + 0.56;
-    this.orbitPitch = 0.16;
-    this.orbitDist = 5.45;
+    this.orbitPitch = 0.14;
+    this.orbitDist = 4.15;
+  }
+
+  private snapDrivingCamera(): void {
+    const sinH = Math.sin(this.physics.heading);
+    const cosH = Math.cos(this.physics.heading);
+    const backDist = this.cameraMode === 'far' ? 5.45 : 3.85;
+    const heightOffset = this.cameraMode === 'far' ? 2.05 : 1.3;
+    const lookAhead = this.cameraMode === 'far' ? 15.0 : 14.0;
+    const camX = this.physics.x - sinH * backDist;
+    const camZ = this.physics.z - cosH * backDist;
+    const surfaceAtCam = getDriveSurfaceHeight(camX, camZ, this.physics.stationIdx);
+    const camY = Math.max(surfaceAtCam + 0.9, this.physics.y + heightOffset);
+    this.camera.position.set(camX, camY, camZ);
+    this.camera.lookAt(
+      this.physics.x + sinH * lookAhead,
+      this.physics.y + 0.78,
+      this.physics.z + cosH * lookAhead,
+    );
+    this.camera.fov = this.cameraMode === 'far' ? 50 : 48;
+    this.camera.updateProjectionMatrix();
   }
 
   public startFreeRoamAtS(s = DRIVE_SPAWN_S): void {
@@ -746,9 +928,14 @@ export class GameEngine {
     this.activeEvent = null;
     this.raceState = 'free_roam';
     this.trafficAI.clearRacers();
+    this.crashEffects.clear();
+    this.crashFlash = 0;
+    this.cameraCrashRoll = 0;
     this.physics = createInitialPhysicsStateAtS(s, 0);
+    this.playerCarRig?.setDamage(0);
     this.world.checkpointBeacon.visible = false;
     this.syncCarPoseToTrack();
+    this.snapDrivingCamera();
   }
 
   public startFreeRoam(spawnX?: number, spawnZ?: number): void {
@@ -763,9 +950,14 @@ export class GameEngine {
   public fastTravelTo(x: number, z: number): void {
     this.tireSmoke.clear();
     this.skidmarks.clear();
+    this.crashEffects.clear();
+    this.crashFlash = 0;
+    this.cameraCrashRoll = 0;
     const proj = projectOntoTrack(x, z);
     this.physics = createInitialPhysicsStateAtS(proj.station.s, 0);
+    this.playerCarRig?.setDamage(0);
     this.syncCarPoseToTrack();
+    this.snapDrivingCamera();
   }
 
   public startRaceEvent(
@@ -781,8 +973,12 @@ export class GameEngine {
       timeOverride ?? event.defaultTime,
     );
 
+    this.crashEffects.clear();
+    this.crashFlash = 0;
+    this.cameraCrashRoll = 0;
     this.physics = createInitialPhysicsStateAtS(event.startS, 0);
     this.physics.totalDriftScore = 0;
+    this.playerCarRig?.setDamage(0);
 
     this.currentLap = 1;
     this.checkpointIdx = 0;
@@ -802,6 +998,7 @@ export class GameEngine {
     this.lastCountdownInt = 4;
     this.updateCheckpointBeacon();
     this.syncCarPoseToTrack();
+    this.snapDrivingCamera();
   }
 
   public resetCarToRoad(): void {
@@ -809,7 +1006,12 @@ export class GameEngine {
     this.physics = createInitialPhysicsStateAtS(st.s, 0);
     this.tireSmoke.clear();
     this.skidmarks.clear();
+    this.crashEffects.clear();
+    this.crashFlash = 0;
+    this.cameraCrashRoll = 0;
+    this.playerCarRig?.setDamage(0);
     this.syncCarPoseToTrack();
+    this.snapDrivingCamera();
   }
 
   public setPaused(p: boolean): void {
@@ -827,6 +1029,130 @@ export class GameEngine {
         policeDistanceM: 999,
         elapsedTime: 0,
       });
+    }
+  }
+
+  public setPhotoMode(enabled: boolean): void {
+    if (this.mode !== 'drive') {
+      this.photoMode = false;
+      return;
+    }
+    this.photoMode = enabled;
+    if (enabled) {
+      this.keysHeld.clear();
+      this.touchInput = {
+        throttle: 0,
+        brake: 0,
+        steer: 0,
+        handbrake: false,
+        nitro: false,
+      };
+      this.resetPhotoCamera();
+      if (this.speedBlurPass) {
+        this.speedBlurPass.uniforms.uBlurAmount.value = this.photoBlurEnabled
+          ? this.photoBlurIntensity * 0.95
+          : 0;
+        (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.5);
+      }
+      audioEngine.updateContinuous({
+        active: false,
+        rpm: 0,
+        maxRpm: 8500,
+        throttle: 0,
+        driftIntensity: 0,
+        nitroActive: false,
+        policeActive: false,
+        policeDistanceM: 999,
+        elapsedTime: 0,
+      });
+    } else {
+      this.camera.rotation.z = 0;
+      if (this.speedBlurPass) {
+        this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+        (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.46);
+      }
+    }
+  }
+
+  public resetPhotoCamera(): void {
+    this.photoYaw = this.physics.heading + 0.58;
+    this.photoPitch = 0.14;
+    this.photoDist = 4.1;
+    this.photoHeight = 0.68;
+    this.photoFov = 44;
+    this.photoRollDeg = 0;
+    this.photoBlurEnabled = false;
+    this.photoBlurIntensity = 0.45;
+    if (this.speedBlurPass) {
+      this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+    }
+  }
+
+  public adjustPhotoOrbit(dx: number, dy: number, zoomDelta = 0): void {
+    this.photoYaw -= dx * 0.008;
+    this.photoPitch = THREE.MathUtils.clamp(
+      this.photoPitch + dy * 0.006,
+      -0.06,
+      1.18,
+    );
+    this.photoDist = THREE.MathUtils.clamp(
+      this.photoDist + zoomDelta,
+      2.6,
+      16.0,
+    );
+  }
+
+  public setPhotoCameraParams(patch: {
+    fov?: number;
+    height?: number;
+    rollDeg?: number;
+    dist?: number;
+    motionBlur?: boolean;
+    blurIntensity?: number;
+  }): void {
+    if (patch.fov !== undefined) {
+      this.photoFov = THREE.MathUtils.clamp(patch.fov, 24, 85);
+    }
+    if (patch.height !== undefined) {
+      this.photoHeight = THREE.MathUtils.clamp(patch.height, -0.25, 2.4);
+    }
+    if (patch.rollDeg !== undefined) {
+      this.photoRollDeg = THREE.MathUtils.clamp(patch.rollDeg, -25, 25);
+    }
+    if (patch.dist !== undefined) {
+      this.photoDist = THREE.MathUtils.clamp(patch.dist, 2.6, 16.0);
+    }
+    if (patch.motionBlur !== undefined) {
+      this.photoBlurEnabled = patch.motionBlur;
+    }
+    if (patch.blurIntensity !== undefined) {
+      this.photoBlurIntensity = THREE.MathUtils.clamp(patch.blurIntensity, 0, 1);
+    }
+    if (this.photoMode && this.speedBlurPass) {
+      this.speedBlurPass.uniforms.uBlurAmount.value = this.photoBlurEnabled
+        ? this.photoBlurIntensity * 0.95
+        : 0;
+      (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.5);
+    }
+  }
+
+  public capturePhotoDataUrl(): string | null {
+    if (this.contextLost) return null;
+    try {
+      const blurVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uBlurAmount.value as number) : 0;
+      if (this.speedBlurPass) this.speedBlurPass.enabled = blurVal > 0.004;
+      const useComposerNow =
+        this.composer !== null &&
+        ((this.usePostProcessing && ((this.bloomPass?.enabled ?? false) || (this.speedBlurPass?.enabled ?? false))) ||
+          (this.photoMode && this.photoBlurEnabled && this.photoBlurIntensity > 0.003));
+      if (useComposerNow && this.composer) {
+        this.composer.render();
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
+      return this.renderer.domElement.toDataURL('image/png');
+    } catch {
+      return null;
     }
   }
 
@@ -921,17 +1247,18 @@ export class GameEngine {
     this.onRaceComplete?.(summary);
   }
 
-  private getCombinedInput(): ControlInputState {
+  private getCombinedInput(dt: number): ControlInputState {
     let throttle = this.touchInput.throttle;
     let brake = this.touchInput.brake;
-    let steer = this.touchInput.steer;
     let handbrake = this.touchInput.handbrake;
     let nitro = this.touchInput.nitro;
 
+    // Keyboard state
+    let keySteer = 0;
     if (this.keysHeld.has('KeyW') || this.keysHeld.has('ArrowUp')) throttle = 1;
     if (this.keysHeld.has('KeyS') || this.keysHeld.has('ArrowDown')) brake = 1;
-    if (this.keysHeld.has('KeyA') || this.keysHeld.has('ArrowLeft')) steer -= 1;
-    if (this.keysHeld.has('KeyD') || this.keysHeld.has('ArrowRight')) steer += 1;
+    if (this.keysHeld.has('KeyA') || this.keysHeld.has('ArrowLeft')) keySteer -= 1;
+    if (this.keysHeld.has('KeyD') || this.keysHeld.has('ArrowRight')) keySteer += 1;
     if (this.keysHeld.has('Space')) handbrake = true;
     if (
       this.keysHeld.has('ShiftLeft') ||
@@ -942,8 +1269,81 @@ export class GameEngine {
       nitro = true;
     }
 
-    steer = THREE.MathUtils.clamp(
-      steer * this.settings.steeringSensitivity,
+    // HTML5 Gamepad API polling (safely guarded against iframe Permissions-Policy blocks)
+    let gpSteer = 0;
+    if (
+      !this.gamepadBlocked &&
+      typeof navigator !== 'undefined' &&
+      typeof navigator.getGamepads === 'function'
+    ) {
+      try {
+        const pads = navigator.getGamepads();
+        for (let i = 0; i < pads.length; i++) {
+          const gp = pads[i];
+          if (!gp || !gp.connected) continue;
+          const rawX = gp.axes[0] ?? 0;
+          if (Math.abs(rawX) > 0.12) {
+            const norm = (Math.abs(rawX) - 0.12) / 0.88;
+            gpSteer = Math.sign(rawX) * norm * norm * 0.7 + Math.sign(rawX) * norm * 0.3;
+          }
+          const rt = gp.buttons[7]?.value ?? 0;
+          const lt = gp.buttons[6]?.value ?? 0;
+          if (rt > 0.05) throttle = Math.max(throttle, rt);
+          if (lt > 0.05) brake = Math.max(brake, lt);
+          if (gp.buttons[0]?.pressed || gp.buttons[2]?.pressed) handbrake = true;
+          if (gp.buttons[1]?.pressed || gp.buttons[5]?.pressed) nitro = true;
+          const camBtn = !!gp.buttons[3]?.pressed;
+          if (camBtn && !this.gpPrevCamBtn) {
+            this.cycleCamera();
+          }
+          this.gpPrevCamBtn = camBtn;
+          break;
+        }
+      } catch {
+        this.gamepadBlocked = true;
+      }
+    }
+
+    // Separate analog touch (wheel / tilt / rocker drag) vs digital keyboard/button taps
+    const touchAbs = Math.abs(this.touchInput.steer);
+    const isAnalogTouch =
+      this.settings.controlScheme === 'wheel' ||
+      this.settings.controlScheme === 'tilt' ||
+      (touchAbs > 0.01 && touchAbs < 0.99);
+
+    let finalSteer = 0;
+    if (Math.abs(gpSteer) > 0.01) {
+      this.smoothedDigitalSteer *= Math.exp(-10 * dt);
+      finalSteer = gpSteer;
+    } else if (isAnalogTouch && keySteer === 0) {
+      this.smoothedDigitalSteer *= Math.exp(-10 * dt);
+      finalSteer = this.touchInput.steer;
+    } else {
+      const targetDigital =
+        keySteer !== 0
+          ? THREE.MathUtils.clamp(keySteer, -1, 1)
+          : Math.sign(this.touchInput.steer);
+
+      const speedNorm = THREE.MathUtils.clamp(this.physics.speedKmh / 240, 0, 1);
+      if (targetDigital === 0) {
+        // Fast center return so taps straighten out cleanly
+        const returnRate = 10.5;
+        this.smoothedDigitalSteer +=
+          (0 - this.smoothedDigitalSteer) * Math.min(1, dt * returnRate);
+        if (Math.abs(this.smoothedDigitalSteer) < 0.01) this.smoothedDigitalSteer = 0;
+      } else {
+        const reversingDir = targetDigital * this.smoothedDigitalSteer < 0;
+        const rampRate = reversingDir
+          ? 8.8
+          : 5.4 - speedNorm * 1.9;
+        this.smoothedDigitalSteer +=
+          (targetDigital - this.smoothedDigitalSteer) * Math.min(1, dt * rampRate);
+      }
+      finalSteer = this.smoothedDigitalSteer;
+    }
+
+    const steer = THREE.MathUtils.clamp(
+      finalSteer * this.settings.steeringSensitivity,
       -1,
       1,
     );
@@ -962,7 +1362,9 @@ export class GameEngine {
     if (this.bloomPass) {
       this.bloomPass.resolution.set(w, h);
     }
-    this.tireSmoke.setViewportHeight(h * this.renderer.getPixelRatio());
+    const pxH = h * this.renderer.getPixelRatio();
+    this.tireSmoke.setViewportHeight(pxH);
+    this.crashEffects.setViewportHeight(pxH);
   };
 
   private handleKeyDown = (e: KeyboardEvent): void => {
@@ -972,6 +1374,13 @@ export class GameEngine {
       )
     ) {
       e.preventDefault();
+    }
+    if (
+      this.mode === 'drive' &&
+      !this.paused &&
+      document.activeElement instanceof HTMLButtonElement
+    ) {
+      document.activeElement.blur();
     }
     this.keysHeld.add(e.code);
     audioEngine.init();
@@ -990,6 +1399,7 @@ export class GameEngine {
 
   private handleBlur = (): void => {
     this.keysHeld.clear();
+    this.smoothedDigitalSteer = 0;
     this.touchInput = {
       throttle: 0,
       brake: 0,
@@ -1016,7 +1426,13 @@ export class GameEngine {
 
       if (!this.contextLost) {
         this.stepSimulation(dt);
-        if (this.usePostProcessing && this.composer) {
+        const blurVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uBlurAmount.value as number) : 0;
+        if (this.speedBlurPass) this.speedBlurPass.enabled = blurVal > 0.004;
+        const useComposerNow =
+          this.composer !== null &&
+          ((this.usePostProcessing && ((this.bloomPass?.enabled ?? false) || (this.speedBlurPass?.enabled ?? false))) ||
+            (this.photoMode && this.photoBlurEnabled && this.photoBlurIntensity > 0.003));
+        if (useComposerNow && this.composer) {
           this.composer.render();
         } else {
           this.renderer.render(this.scene, this.camera);
@@ -1094,8 +1510,11 @@ export class GameEngine {
   private stepSimulation(dt: number): void {
     this.elapsedTime += dt;
 
-    // Advance continuous 24h Day-Night cycle
-    if (this.autoDayNightCycle && !(this.mode === 'drive' && this.paused)) {
+    // Advance continuous 24h Day-Night cycle (frozen when paused or in Photo Mode)
+    if (
+      this.autoDayNightCycle &&
+      !(this.mode === 'drive' && (this.paused || this.photoMode))
+    ) {
       const cycleRate = this.mode === 'drive' ? 1 / 145 : 1 / 240;
       this.cyclePhase = (this.cyclePhase + dt * cycleRate) % 1;
     }
@@ -1107,7 +1526,13 @@ export class GameEngine {
 
     this.applyAtmosphere();
     const atm = this.atmosphere.state;
-    this.world.updateDynamicWorld(this.elapsedTime, isWet, atm.nightFactor);
+    this.world.updateDynamicWorld(
+      this.elapsedTime,
+      isWet,
+      atm.nightFactor,
+      this.physics.x,
+      this.physics.z,
+    );
     this.updateTexelSnappedShadows();
 
     if (this.weather === 'thunderstorm') {
@@ -1122,14 +1547,77 @@ export class GameEngine {
       }
     }
 
+    // Update pooled warm-amber streetlamp lights near player/showcase at night
+    this.updateStreetLampLights(atm.nightFactor);
+
     if (this.mode === 'showcase') {
-      if (this.headlightSpot) this.headlightSpot.intensity = 0;
-      if (this.exhaustLight) this.exhaustLight.intensity = 0;
+      this.headlightBeam.intensity = 0;
+      this.taillightLight.intensity = 0;
+      for (const tl of this.trafficHeadlights) tl.intensity = 0;
       if (this.playerCarRig) {
         this.playerCarRig.setLights(atm.nightFactor > 0.3, false, false);
       }
+
+      if (this.washActive && this.playerCarRig) {
+        this.washTimer += dt;
+        const tNorm = Math.min(1, this.washTimer / this.washDuration);
+        const washProgress = tNorm * 1.12;
+        const washFoam = Math.sin(tNorm * Math.PI) * 1.15;
+
+        this.playerCarRig.setDirt(this.washStartDirt, washProgress, washFoam);
+        this.carDirtLevel = Math.max(0, this.washStartDirt * (1 - tNorm));
+
+        // Dual sweeping high-pressure spray nozzles orbiting the vehicle
+        const sweepAngle = tNorm * Math.PI * 4.0 + this.physics.heading;
+        const sprayY = this.physics.y + 1.45 - tNorm * 1.15;
+        for (let i = 0; i < this.washPositions.length; i += 3) {
+          this.washPositions[i] += this.washVelocities[i] * dt;
+          this.washPositions[i + 1] += this.washVelocities[i + 1] * dt;
+          this.washPositions[i + 2] += this.washVelocities[i + 2] * dt;
+          this.washVelocities[i + 1] -= 4.2 * dt;
+
+          if (this.washPositions[i + 1] < this.physics.y + 0.04) {
+            const side = (i / 3) % 2 === 0 ? 1 : -1;
+            const jetAng = sweepAngle + side * Math.PI * 0.5 + (Math.random() - 0.5) * 0.65;
+            const nozzleR = 2.45;
+            const targetR = 0.75 + Math.random() * 0.6;
+            const nx = this.physics.x + Math.cos(jetAng) * nozzleR;
+            const nz = this.physics.z + Math.sin(jetAng) * nozzleR;
+            const tx = this.physics.x + Math.cos(jetAng) * targetR;
+            const tz = this.physics.z + Math.sin(jetAng) * targetR;
+            this.washPositions[i] = THREE.MathUtils.lerp(nx, tx, Math.random() * 0.35);
+            this.washPositions[i + 1] = sprayY + (Math.random() - 0.4) * 0.45;
+            this.washPositions[i + 2] = THREE.MathUtils.lerp(nz, tz, Math.random() * 0.35);
+            this.washVelocities[i] = (tx - nx) * 2.4 + (Math.random() - 0.5) * 1.6;
+            this.washVelocities[i + 1] = 0.65 + Math.random() * 1.4;
+            this.washVelocities[i + 2] = (tz - nz) * 2.4 + (Math.random() - 0.5) * 1.6;
+          }
+        }
+        this.washPoints.geometry.attributes.position.needsUpdate = true;
+
+        this.telemetryTimer += dt;
+        if (this.telemetryTimer >= 0.08) {
+          this.telemetryTimer = 0;
+          this.emitTelemetry();
+        }
+
+        if (this.washTimer >= this.washDuration) {
+          this.washActive = false;
+          this.washPoints.visible = false;
+          this.carDirtLevel = 0;
+          this.physics.damageLevel = 0;
+          this.playerCarRig.setDirt(0, -1, 0);
+          this.playerCarRig.setDamage(0);
+          if (this.currentCarData) {
+            this.onDirtChange?.(this.currentCarData.carId, 0);
+          }
+          this.onWashComplete?.();
+          this.emitTelemetry();
+        }
+      }
+
       if (this.autoOrbit) {
-        this.orbitYaw += dt * 0.22;
+        this.orbitYaw += dt * (this.washActive ? 0.58 : 0.22);
       }
       const cx =
         this.physics.x +
@@ -1140,11 +1628,40 @@ export class GameEngine {
         this.physics.z +
         Math.cos(this.orbitYaw) * Math.cos(this.orbitPitch) * this.orbitDist;
       this.camera.position.lerp(_camTarget.set(cx, cy, cz), Math.min(1, dt * 8));
-      this.camera.lookAt(this.physics.x, this.physics.y + 0.68, this.physics.z);
-      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, 47, 6, dt);
+      this.camera.lookAt(this.physics.x, this.physics.y + 0.64, this.physics.z);
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, 44, 6, dt);
       this.camera.updateProjectionMatrix();
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+      }
+      return;
+    }
+
+    if (this.photoMode && this.mode === 'drive') {
+      const horiz = Math.cos(this.photoPitch) * this.photoDist;
+      const cx = this.physics.x + Math.sin(this.photoYaw) * horiz;
+      const cz = this.physics.z + Math.cos(this.photoYaw) * horiz;
+      const surfaceAtCam = getDriveSurfaceHeight(cx, cz, this.physics.stationIdx);
+      const cy = Math.max(
+        surfaceAtCam + 0.3,
+        this.physics.y + this.photoHeight + Math.sin(this.photoPitch) * this.photoDist,
+      );
+      this.camera.position.lerp(_camTarget.set(cx, cy, cz), Math.min(1, dt * 14));
+      this.camera.lookAt(
+        this.physics.x,
+        this.physics.y + this.photoHeight,
+        this.physics.z,
+      );
+      if (Math.abs(this.photoRollDeg) > 0.05) {
+        this.camera.rotateZ(THREE.MathUtils.degToRad(this.photoRollDeg));
+      }
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, this.photoFov, 10, dt);
+      this.camera.updateProjectionMatrix();
+      if (this.speedBlurPass) {
+        this.speedBlurPass.uniforms.uBlurAmount.value = this.photoBlurEnabled
+          ? this.photoBlurIntensity * 0.95
+          : 0;
+        (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.5);
       }
       return;
     }
@@ -1156,7 +1673,7 @@ export class GameEngine {
       return;
     }
 
-    let input = this.getCombinedInput();
+    let input = this.getCombinedInput(dt);
     if (this.raceState === 'countdown') {
       this.countdownTimer -= dt;
       const ceilVal = Math.ceil(this.countdownTimer);
@@ -1208,9 +1725,15 @@ export class GameEngine {
       this.weather === 'thunderstorm';
     const hlOn = this.headlightsManual ?? autoHL;
 
+    this.crashFlash = Math.max(0, this.crashFlash - dt * 2.8);
+    this.cameraCrashRoll *= Math.exp(-7.5 * dt);
+    this.cameraCrashJoltX *= Math.exp(-10 * dt);
+    this.cameraCrashJoltZ *= Math.exp(-10 * dt);
+
     const aiRes = this.trafficAI.update(
       dt,
       this.physics,
+      spec.massKg,
       this.raceState === 'racing',
       hlOn,
     );
@@ -1219,14 +1742,54 @@ export class GameEngine {
       this.physics.lastCollisionImpact,
       aiRes.collisionImpact,
     );
-    if (maxImpact > 0.14) {
-      audioEngine.playCollision(maxImpact);
+    if (maxImpact > 0.1) {
+      const kind = this.physics.lastCollisionKind === 'none' ? 'car' : this.physics.lastCollisionKind;
+      audioEngine.playCollision(maxImpact, kind);
+      this.crashEffects.emitCrashBurst({
+        x: this.physics.lastCollisionPointX,
+        y: this.physics.lastCollisionPointY,
+        z: this.physics.lastCollisionPointZ,
+        nx: this.physics.lastCollisionNx,
+        nz: this.physics.lastCollisionNz,
+        carVx: this.physics.vx,
+        carVz: this.physics.vz,
+        intensity: maxImpact,
+        carColorHex: this.currentCarData.customization.paintColor,
+        kind,
+      });
       if (this.settings.cameraShake) {
-        this.cameraShakeIntensity = Math.min(0.6, maxImpact * 0.5);
+        this.cameraShakeIntensity = Math.min(0.85, maxImpact * 0.72);
       }
-      if (maxImpact > 0.58) {
-        this.hitstopTimer = 0.035;
+      if (kind !== 'landing') {
+        this.crashFlash = Math.min(1, maxImpact * 0.92);
+        const crashSide =
+          Math.cos(this.physics.heading) * this.physics.lastCollisionNx -
+          Math.sin(this.physics.heading) * this.physics.lastCollisionNz;
+        this.cameraCrashRoll = THREE.MathUtils.clamp(
+          this.cameraCrashRoll + crashSide * maxImpact * 0.14,
+          -0.18,
+          0.18,
+        );
+        this.cameraCrashJoltX = -this.physics.lastCollisionNx * Math.min(0.55, maxImpact * 0.48);
+        this.cameraCrashJoltZ = -this.physics.lastCollisionNz * Math.min(0.55, maxImpact * 0.48);
+        if (maxImpact > 0.56) {
+          this.hitstopTimer = 0.042;
+        }
       }
+    }
+
+    if (this.physics.railScrapeIntensity > 0.05) {
+      this.crashEffects.emitRailScrape(
+        dt,
+        this.physics.lastCollisionPointX,
+        this.physics.lastCollisionPointY,
+        this.physics.lastCollisionPointZ,
+        this.physics.lastCollisionNx,
+        this.physics.lastCollisionNz,
+        this.physics.vx,
+        this.physics.vz,
+        this.physics.railScrapeIntensity,
+      );
     }
 
     // Apply banked & sloped track pose + suspension posture to Player Car Rig
@@ -1240,52 +1803,121 @@ export class GameEngine {
       this.physics.rollRad,
       this.physics.heaveY,
     );
+    this.playerCarRig.setDamage(this.physics.damageLevel);
     const flameVisible =
       this.physics.nitroActive || this.physics.exhaustFlameTimer > 0;
-    this.playerCarRig.setLights(hlOn, input.brake > 0.1, flameVisible);
+    const damagedFlicker =
+      this.physics.damageLevel > 0.78 && Math.sin(this.elapsedTime * 37) > 0.72
+        ? false
+        : hlOn;
+    this.playerCarRig.setLights(damagedFlicker, input.brake > 0.1, flameVisible);
 
-    // Dynamic afterburner PointLight illuminating asphalt behind exhaust tips
+    // Dynamic Mud & Road Grime Accumulation during driving / free roam
+    if (this.physics.speedKmh > 3) {
+      const speedFactor = THREE.MathUtils.clamp(this.physics.speedKmh / 95, 0.08, 1.85);
+      const driftBoost = this.physics.isDrifting ? 1.45 : 1.0;
+      let accumRate = isWet ? 0.007 : 0.0012;
+      if (this.physics.surface === 'dirt') accumRate = 0.056;
+      else if (this.physics.surface === 'sand') accumRate = 0.042;
+      else if (this.physics.surface === 'grass') accumRate = 0.036;
+      else if (this.physics.surface === 'snow') accumRate = 0.024;
+      else if (this.physics.surface === 'water') accumRate = -0.032;
+
+      const minFloor = this.physics.surface === 'water' ? 0.04 : 0;
+      this.carDirtLevel = THREE.MathUtils.clamp(
+        this.carDirtLevel + accumRate * speedFactor * driftBoost * dt,
+        minFloor,
+        1,
+      );
+    }
+    this.playerCarRig.setDirt(this.carDirtLevel, -1, 0);
+
     const sinH = Math.sin(this.physics.heading);
     const cosH = Math.cos(this.physics.heading);
-    if (this.exhaustLight) {
-      if (flameVisible) {
-        this.exhaustLight.position.set(
-          this.physics.x - sinH * 2.55,
-          this.physics.y + 0.42,
-          this.physics.z - cosH * 2.55,
-        );
-        this.exhaustLight.intensity = this.physics.nitroActive
-          ? 7.5 + Math.random() * 3.5
-          : 4.5;
-      } else {
-        this.exhaustLight.intensity = 0;
-      }
-    }
 
     // Subtle NOS chassis vibration & engine surge feedback
     if (this.physics.nitroActive && this.settings.cameraShake) {
       this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.045);
     }
 
-    // Real dynamic car headlight pool illuminating highway & jungle corridor through pitch-dark night
-    if (this.headlightSpot) {
-      if (hlOn) {
-        this.headlightSpot.position.set(
-          this.physics.x + sinH * 2.1,
-          this.physics.y + 0.85,
-          this.physics.z + cosH * 2.1,
-        );
-        this.headlightSpot.target.position.set(
-          this.physics.x + sinH * 42,
-          this.physics.y - 0.65,
-          this.physics.z + cosH * 42,
-        );
-        this.headlightSpot.target.updateMatrixWorld();
-        this.headlightSpot.intensity = 24 + atm.nightFactor * 175;
-      } else {
-        this.headlightSpot.intensity = 0;
-      }
+    // Wide, soft-penumbra forward highway illumination (eliminates 2 sharp spotlight circles & cone meshes)
+    if (hlOn) {
+      const flickMult = damagedFlicker ? 1.0 : 0.35;
+      const beamStrength = (22 + atm.nightFactor * 175) * flickMult;
+      this.headlightBeam.position.set(
+        this.physics.x + sinH * 2.15,
+        this.physics.y + 0.78,
+        this.physics.z + cosH * 2.15,
+      );
+      this.headlightBeam.target.position.set(
+        this.physics.x + sinH * 95,
+        this.physics.y - 0.15,
+        this.physics.z + cosH * 95,
+      );
+      this.headlightBeam.target.updateMatrixWorld();
+      this.headlightBeam.intensity = beamStrength;
+    } else {
+      this.headlightBeam.intensity = 0;
     }
+
+    // Merged rear crimson taillight/brake & blue afterburner PointLight pushed cleanly back behind diffuser
+    const brakeBoost = input.brake > 0.1 ? 1.0 : 0.0;
+    if (flameVisible) {
+      this.taillightLight.color.setHex(0x38bdf8);
+      this.taillightLight.position.set(
+        this.physics.x - sinH * 2.85,
+        this.physics.y + 0.44,
+        this.physics.z - cosH * 2.85,
+      );
+      this.taillightLight.intensity = this.physics.nitroActive
+        ? 4.2 + Math.random() * 2.0
+        : 2.8;
+    } else if (atm.nightFactor > 0.18 || brakeBoost > 0) {
+      this.taillightLight.color.setHex(0xff2040);
+      this.taillightLight.position.set(
+        this.physics.x - sinH * 2.85,
+        this.physics.y + 0.50,
+        this.physics.z - cosH * 2.85,
+      );
+      this.taillightLight.intensity = atm.nightFactor * (0.9 + brakeBoost * 2.0) + brakeBoost * 0.45;
+    } else {
+      this.taillightLight.intensity = 0;
+    }
+
+    // Pooled dynamic headlight pool on nearest oncoming/opponent car at night
+    if (atm.nightFactor > 0.22 && this.trafficHeadlights.length > 0) {
+      const count = this.trafficAI.getNearestHeadlights(
+        this.physics.x,
+        this.physics.z,
+        this.nearestHeadlightTargets,
+        this.trafficHeadlights.length,
+      );
+      for (let i = 0; i < this.trafficHeadlights.length; i++) {
+        const tl = this.trafficHeadlights[i];
+        if (i < count) {
+          const tgt = this.nearestHeadlightTargets[i];
+          const ts = Math.sin(tgt.heading);
+          const tc = Math.cos(tgt.heading);
+          tl.position.set(tgt.x + ts * 6.5, tgt.y + 0.9, tgt.z + tc * 6.5);
+          tl.intensity = 24 * atm.nightFactor;
+        } else {
+          tl.intensity = 0;
+        }
+      }
+    } else {
+      for (const tl of this.trafficHeadlights) tl.intensity = 0;
+    }
+
+    // Crash debris, molten sparks, impact smoke & radiator steam
+    this.crashEffects.emitRadiatorSteam(
+      dt,
+      this.physics.x + sinH * 1.45,
+      this.physics.y + 0.85,
+      this.physics.z + cosH * 1.45,
+      this.physics.damageLevel,
+      this.physics.speedKmh,
+    );
+    this.crashEffects.update(dt, this.physics.y);
 
     // Rain particles around car
     if (this.rainPoints.visible) {
@@ -1325,6 +1957,7 @@ export class GameEngine {
       maxRpm: this.physics.maxRpm,
       throttle: this.physics.nitroActive ? 1.0 : input.throttle,
       driftIntensity: driftAudioLevel,
+      railScrape: this.physics.railScrapeIntensity,
       nitroActive: this.physics.nitroActive,
       policeActive: false,
       policeDistanceM: 999,
@@ -1398,6 +2031,9 @@ export class GameEngine {
             driftBank,
           );
         }
+        if (this.currentCarData) {
+          this.onDirtChange?.(this.currentCarData.carId, this.carDirtLevel);
+        }
         this.freeRoamAccumDist = 0;
         this.freeRoamAccumTimer = 0;
       }
@@ -1416,54 +2052,65 @@ export class GameEngine {
     const sinH = Math.sin(this.physics.heading);
     const cosH = Math.cos(this.physics.heading);
 
-    let backDist = 5.35;
-    let heightOffset = 1.6;
-    let lookAhead = 11.5;
-    let lateralSwing = -this.physics.angularVel * 0.42;
+    let backDist = 3.85;
+    let heightOffset = 1.3;
+    let lookAhead = 14.0;
+    let lateralSwing = -this.physics.angularVel * 0.22;
     let targetFov =
-      55 +
-      Math.min(20, this.physics.speedKmh * 0.068) +
-      (this.physics.nitroActive ? 11 : 0);
+      48 +
+      Math.min(9, this.physics.speedKmh * 0.032) +
+      (this.physics.nitroActive ? 5 : 0);
+
+    // Weight-feel G-force chase camera breathing: compresses closer on hard braking, stretches slightly under hard launch/NOS
+    const gLongLag = THREE.MathUtils.clamp(this.physics.longitudinalG * 0.1, -0.16, 0.2);
 
     if (this.cameraMode === 'far') {
-      backDist = 9.0;
-      heightOffset = 3.3;
-      lookAhead = 12;
+      backDist = 5.45 + gLongLag * 0.8;
+      heightOffset = 2.05;
+      lookAhead = 15;
+      targetFov =
+        50 +
+        Math.min(8, this.physics.speedKmh * 0.028) +
+        (this.physics.nitroActive ? 4 : 0);
     } else if (this.cameraMode === 'hood') {
       backDist = -0.35;
-      heightOffset = 1.32;
+      heightOffset = 1.32 + this.physics.heaveY * 0.45;
       lookAhead = 22;
       lateralSwing = 0;
-      targetFov = 65 + (this.physics.nitroActive ? 9 : 0);
+      targetFov = 62 + (this.physics.nitroActive ? 7 : 0);
     } else if (this.cameraMode === 'bumper') {
       backDist = -2.25;
-      heightOffset = 0.7;
+      heightOffset = 0.7 + this.physics.heaveY * 0.55;
       lookAhead = 28;
       lateralSwing = 0;
-      targetFov = 70 + (this.physics.nitroActive ? 9 : 0);
+      targetFov = 66 + (this.physics.nitroActive ? 7 : 0);
     } else if (this.cameraMode === 'cinematic') {
       const sweep = this.elapsedTime * 0.45;
       _camTarget.set(
-        this.physics.x + Math.sin(sweep) * 9.5,
-        this.physics.y + 3.0,
-        this.physics.z + Math.cos(sweep) * 9.5,
+        this.physics.x + Math.sin(sweep) * 5.6,
+        this.physics.y + 2.1,
+        this.physics.z + Math.cos(sweep) * 5.6,
       );
       this.camera.position.lerp(_camTarget, 1 - Math.exp(-5 * dt));
-      this.camera.lookAt(this.physics.x, this.physics.y + 0.9, this.physics.z);
+      this.camera.lookAt(this.physics.x, this.physics.y + 0.8, this.physics.z);
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
       }
       return;
+    } else {
+      backDist += gLongLag;
     }
 
-    const camX = this.physics.x - sinH * backDist + cosH * lateralSwing;
-    const camZ = this.physics.z - cosH * backDist - sinH * lateralSwing;
+    const camX =
+      this.physics.x - sinH * backDist + cosH * lateralSwing + this.cameraCrashJoltX;
+    const camZ =
+      this.physics.z - cosH * backDist - sinH * lateralSwing + this.cameraCrashJoltZ;
     const surfaceAtCam = getDriveSurfaceHeight(camX, camZ, this.physics.stationIdx);
-    const camY = Math.max(surfaceAtCam + 1.0, this.physics.y + heightOffset);
+    const camY = Math.max(surfaceAtCam + 0.9, this.physics.y + heightOffset);
 
     _camTarget.set(camX, camY, camZ);
     const dampLambda =
-      this.cameraMode === 'hood' || this.cameraMode === 'bumper' ? 28 : 11.0;
+      this.cameraMode === 'hood' || this.cameraMode === 'bumper' ? 28 : 14.5;
     this.camera.position.lerp(_camTarget, 1 - Math.exp(-dampLambda * dt));
 
     if (this.cameraShakeIntensity > 0.005) {
@@ -1475,10 +2122,18 @@ export class GameEngine {
 
     _camLook.set(
       this.physics.x + sinH * lookAhead,
-      this.physics.y + 0.85,
+      this.physics.y + 0.78,
       this.physics.z + cosH * lookAhead,
     );
     this.camera.lookAt(_camLook);
+    const dynRollHorizon = THREE.MathUtils.clamp(
+      this.physics.lateralG * 0.012 + this.cameraCrashRoll,
+      -0.22,
+      0.22,
+    );
+    if (Math.abs(dynRollHorizon) > 0.001) {
+      this.camera.rotateZ(dynRollHorizon);
+    }
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 7.5, dt);
     this.camera.updateProjectionMatrix();
 
@@ -1488,7 +2143,10 @@ export class GameEngine {
         0,
         1,
       );
-      const targetBlur = speedNorm * 0.26 + (this.physics.nitroActive ? 0.22 : 0);
+      const targetBlur =
+        speedNorm * 0.26 +
+        (this.physics.nitroActive ? 0.22 : 0) +
+        this.crashFlash * 0.45;
       const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
       this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
         curBlur,
@@ -1496,6 +2154,55 @@ export class GameEngine {
         8,
         dt,
       );
+    }
+  }
+
+  private updateStreetLampLights(nightFactor: number): void {
+    const lamps = this.world.lampPositions;
+    if (nightFactor <= 0.14 || lamps.length === 0) {
+      for (const l of this.streetLampLights) l.intensity = 0;
+      return;
+    }
+
+    // Track closest 2 coastal/harbor streetlamps to the player with zero allocation
+    const slotCount = this.streetLampLights.length;
+    if (slotCount === 0) return;
+    const px = this.physics.x;
+    const pz = this.physics.z;
+    const bestIdx = [-1, -1];
+    const bestDist = [Infinity, Infinity];
+    const maxRangeSq = 68 * 68;
+
+    for (let i = 0; i < lamps.length; i++) {
+      const lp = lamps[i];
+      const dx = lp.x - px;
+      const dz = lp.z - pz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > maxRangeSq) continue;
+      if (d2 < bestDist[1]) {
+        if (d2 < bestDist[0]) {
+          bestDist[1] = bestDist[0];
+          bestIdx[1] = bestIdx[0];
+          bestDist[0] = d2;
+          bestIdx[0] = i;
+        } else {
+          bestDist[1] = d2;
+          bestIdx[1] = i;
+        }
+      }
+    }
+
+    for (let s = 0; s < slotCount; s++) {
+      const light = this.streetLampLights[s];
+      const idx = bestIdx[s];
+      if (idx >= 0) {
+        const lp = lamps[idx];
+        light.position.set(lp.x, lp.y, lp.z);
+        const fade = 1 - THREE.MathUtils.smoothstep(Math.sqrt(bestDist[s]), 38, 68);
+        light.intensity = 38 * nightFactor * fade;
+      } else {
+        light.intensity = 0;
+      }
     }
   }
 
@@ -1570,6 +2277,9 @@ export class GameEngine {
       cycleTimeLabel: formatCycleClock(this.cyclePhase),
       autoDayNightCycle: this.autoDayNightCycle,
       fps: Math.round(this.fpsCounter),
+      dirtLevel: this.carDirtLevel,
+      damageLevel: this.physics.damageLevel,
+      crashFlash: this.crashFlash,
       opponents: this.trafficAI.racers.map((r) => ({
         x: r.x,
         z: r.z,
@@ -1597,8 +2307,12 @@ export class GameEngine {
     this.composer?.dispose();
     this.rainPoints.geometry.dispose();
     (this.rainPoints.material as THREE.Material).dispose();
+    this.washPoints.geometry.dispose();
+    (this.washPoints.material as THREE.Material).dispose();
+    this.washSpriteTex.dispose();
     this.tireSmoke.dispose();
     this.skidmarks.dispose();
+    this.crashEffects.dispose();
     this.showroomTurntable.geometry.dispose();
     (this.showroomTurntable.material as THREE.Material).dispose();
     this.renderer.dispose();

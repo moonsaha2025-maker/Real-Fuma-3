@@ -1,17 +1,29 @@
 import React from 'react';
 import {
+  Aperture,
+  ChevronLeft,
+  ChevronRight,
   CloudRain,
   Lightbulb,
   MapPin,
   Play,
+  Radio,
   RotateCcw,
   Settings,
   Sun,
   Trophy,
+  Volume2,
+  VolumeX,
   Warehouse,
 } from 'lucide-react';
 import { audioEngine } from '../engine/audio';
-import { RaceResultSummary, TimeOfDay, WeatherType } from '../types/game';
+import { getRadioStationMeta, RADIO_STATIONS, radioEngine } from '../engine/radio';
+import {
+  RaceResultSummary,
+  RadioStationId,
+  TimeOfDay,
+  WeatherType,
+} from '../types/game';
 
 const WEATHER_CYCLE: WeatherType[] = [
   'sunny',
@@ -29,7 +41,12 @@ interface PauseModalProps {
   cycleTimeLabel: string;
   autoDayNightCycle: boolean;
   headlightsOn: boolean;
+  radioStation: RadioStationId;
+  radioVolume: number;
+  onChangeRadioStation: (station: RadioStationId) => void;
+  onChangeRadioVolume: (volume: number) => void;
   onResume: () => void;
+  onOpenPhotoMode: () => void;
   onRestart: () => void;
   onOpenMap: () => void;
   onOpenSettings: () => void;
@@ -46,7 +63,12 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   cycleTimeLabel,
   autoDayNightCycle,
   headlightsOn,
+  radioStation,
+  radioVolume,
+  onChangeRadioStation,
+  onChangeRadioVolume,
   onResume,
+  onOpenPhotoMode,
   onRestart,
   onOpenMap,
   onOpenSettings,
@@ -56,6 +78,14 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onResetCar,
   onExitToMenu,
 }) => {
+  const stationMeta = getRadioStationMeta(radioStation);
+  const currentTrack = radioEngine.getCurrentTrack();
+  const cycleStation = (delta: -1 | 1) => {
+    audioEngine.init();
+    const curIdx = RADIO_STATIONS.findIndex((s) => s.id === radioStation);
+    const nextIdx = (curIdx + delta + RADIO_STATIONS.length) % RADIO_STATIONS.length;
+    onChangeRadioStation(RADIO_STATIONS[nextIdx].id);
+  };
   const nextWeather = () => {
     const idx = WEATHER_CYCLE.indexOf(weather);
     onCycleWeather(WEATHER_CYCLE[(idx + 1) % WEATHER_CYCLE.length], timeOfDay);
@@ -141,6 +171,100 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           </button>
         </div>
 
+        {/* Radio Station & Volume Tuner */}
+        <div className="bg-slate-950/90 border border-slate-800 p-3 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Radio
+                className="w-4 h-4 shrink-0"
+                style={{ color: stationMeta.accentHex }}
+              />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs font-display font-bold text-white truncate">
+                  <span>{stationMeta.name}</span>
+                  <span className="text-slate-500" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="font-mono-num text-[11px] text-sky-300 tabular-nums">
+                    {stationMeta.freq}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400 truncate">
+                  {stationMeta.genre} — {currentTrack}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => cycleStation(-1)}
+                title="Previous Station"
+                aria-label="Previous Radio Station"
+                className="p-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => cycleStation(1)}
+                title="Next Station"
+                aria-label="Next Radio Station"
+                className="p-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-5 gap-1">
+            {RADIO_STATIONS.map((st) => {
+              const active = st.id === radioStation;
+              return (
+                <button
+                  key={st.id}
+                  onClick={() => {
+                    audioEngine.init();
+                    onChangeRadioStation(st.id);
+                  }}
+                  className={`py-1 px-1 text-[9px] font-display font-bold tracking-wider truncate border cursor-pointer ${
+                    active
+                      ? 'bg-rose-600 border-rose-400 text-white'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-100'
+                  }`}
+                  title={`${st.name} (${st.freq})`}
+                >
+                  {st.id === 'off' ? 'OFF' : st.freq.split(' ')[0]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2.5 pt-0.5">
+            {radioVolume <= 0.01 || radioStation === 'off' ? (
+              <VolumeX className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            )}
+            <span className="text-[10px] font-display tracking-wider text-slate-400 shrink-0">
+              RADIO VOL
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={radioVolume}
+              onChange={(e) => {
+                audioEngine.init();
+                onChangeRadioVolume(parseFloat(e.target.value));
+              }}
+              aria-label="Radio Volume"
+              className="flex-1 accent-rose-600 cursor-pointer"
+            />
+            <span className="font-mono-num text-[10px] text-slate-200 tabular-nums w-8 text-right">
+              {Math.round(radioVolume * 100)}%
+            </span>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <button
             onClick={() => {
@@ -151,6 +275,16 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           >
             <Play className="w-4 h-4 fill-current" />
             RESUME DRIVING
+          </button>
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              onOpenPhotoMode();
+            }}
+            className="w-full flex items-center justify-center gap-2 bg-sky-600/85 hover:bg-sky-500 text-white font-display font-bold tracking-wider text-xs py-2.5 cursor-pointer"
+          >
+            <Aperture className="w-4 h-4" />
+            PHOTO MODE
           </button>
           <button
             onClick={() => {

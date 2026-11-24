@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { Radio } from 'lucide-react';
+import { audioEngine } from '../engine/audio';
+import { getRadioStationMeta } from '../engine/radio';
+import { RadioStationId } from '../types/game';
 import { Logo } from './Logo';
 
 interface LoadingScreenProps {
+  radioStation: RadioStationId;
   onReady: () => void;
 }
 
@@ -13,8 +18,12 @@ const STAGES = [
   'READY TO DRIVE',
 ];
 
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onReady }) => {
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({
+  radioStation,
+  onReady,
+}) => {
   const [progress, setProgress] = useState(0);
+  const stationMeta = getRadioStationMeta(radioStation);
 
   useEffect(() => {
     const start = performance.now();
@@ -40,12 +49,22 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onReady }) => {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-between bg-[#07080b] p-6 sm:p-12">
+    <div
+      onPointerDown={() => audioEngine.init()}
+      className="fixed inset-0 z-50 flex flex-col justify-between bg-[#07080b] p-6 sm:p-12"
+    >
       <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
         <Logo />
         <div className="text-right font-mono-num text-xs text-slate-400">
-          <div>BUILD 3.0 // WEBGL PBR</div>
-          <div className="text-sky-400">COASTAL HORIZON</div>
+          <div>COASTAL HORIZON</div>
+          <div className="flex items-center justify-end gap-1.5 text-[11px] text-slate-300 mt-0.5">
+            <Radio className="w-3.5 h-3.5" style={{ color: stationMeta.accentHex }} />
+            <span>{stationMeta.name}</span>
+            <span className="text-slate-600" aria-hidden="true">
+              ·
+            </span>
+            <span className="text-sky-400">{stationMeta.freq}</span>
+          </div>
         </div>
       </div>
 
@@ -75,7 +94,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onReady }) => {
         </div>
         <div className="flex justify-between text-[11px] text-slate-500 font-display tracking-wider">
           <span>WASD / ARROWS OR TOUCH CONTROLS</span>
-          <span>SPACE DRIFT · SHIFT NITRO · C CAMERA</span>
+          <span>SPACE DRIFT · SHIFT NITRO · C CAMERA · P PHOTO</span>
         </div>
       </div>
     </div>

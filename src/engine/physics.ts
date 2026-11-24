@@ -43,6 +43,9 @@ export interface VehiclePhysicsState {
   pitchRad: number;
   rollRad: number;
   heaveY: number;
+  pitchVel: number;
+  rollVel: number;
+  heaveVel: number;
   trackBankRad: number;
   trackPitchRad: number;
   stationIdx: number;
@@ -52,6 +55,14 @@ export interface VehiclePhysicsState {
   surface: 'asphalt' | 'dirt' | 'sand' | 'snow' | 'grass' | 'water';
   grounded: boolean;
   lastCollisionImpact: number;
+  lastCollisionPointX: number;
+  lastCollisionPointY: number;
+  lastCollisionPointZ: number;
+  lastCollisionNx: number;
+  lastCollisionNz: number;
+  lastCollisionKind: 'none' | 'rail' | 'car' | 'landing';
+  railScrapeIntensity: number;
+  damageLevel: number;
   justShifted: boolean;
 }
 
@@ -92,6 +103,9 @@ export function createInitialPhysicsStateAtS(
     pitchRad: 0,
     rollRad: 0,
     heaveY: 0,
+    pitchVel: 0,
+    rollVel: 0,
+    heaveVel: 0,
     trackBankRad: pt.station.bankRad,
     trackPitchRad: -Math.asin(THREE.MathUtils.clamp(pt.station.ty, -0.5, 0.5)),
     stationIdx: pt.station.idx,
@@ -101,6 +115,14 @@ export function createInitialPhysicsStateAtS(
     surface: 'asphalt',
     grounded: true,
     lastCollisionImpact: 0,
+    lastCollisionPointX: pt.x,
+    lastCollisionPointY: pt.y,
+    lastCollisionPointZ: pt.z,
+    lastCollisionNx: 0,
+    lastCollisionNz: 0,
+    lastCollisionKind: 'none',
+    railScrapeIntensity: 0,
+    damageLevel: 0,
     justShifted: false,
   };
 }
@@ -121,12 +143,15 @@ export function stepVehiclePhysics(
 ): void {
   const dt = Math.min(options.dt, 0.05);
   state.lastCollisionImpact = 0;
+  state.lastCollisionKind = 'none';
+  state.railScrapeIntensity = 0;
   state.justShifted = false;
   if (state.exhaustFlameTimer > 0) {
     state.exhaustFlameTimer = Math.max(0, state.exhaustFlameTimer - dt);
   }
 
   const stats = getEffectiveCarStats(spec, upgrades);
+  const massFactor = THREE.MathUtils.clamp(stats.massKg / 1450, 0.82, 1.32);
   const maxRpm = spec.category === 'SUPERCARS' ? 9000 : 8000;
   state.maxRpm = maxRpm;
 
@@ -182,59 +207,69 @@ export function stepVehiclePhysics(
       ? Math.abs(Math.atan2(preLateral, absPreForward + 0.5)) * (180 / Math.PI)
       : 0;
 
-  // Dynamic steering lock: expands during drifts so deep 15°-48° counter-steer slides are smooth & catchable
-  const speedRatio = Math.min(1, absPreForward / 78);
-  const driftExtraSteer = state.driftBlend * 0.24;
-  const maxSteer = 0.64 - speedRatio * 0.26 + driftExtraSteer;
+  // Dynamic steering lock & speed-weighted steering feel (smooth ~2.2G high-speed carving, tight low-speed hairpins)
+  const speedRatio = Math.min(1, absPreForward / 84);
+  const driftExtraSteer = state.driftBlend * 0.16;
+  const maxSteer = 0.54 * (1 - speedRatio * 0.44) + driftExtraSteer;
   const targetSteer = -input.steer * maxSteer;
-  state.steerAngle +=
-    (targetSteer - state.steerAngle) * Math.min(1, dt * (state.driftBlend > 0.25 ? 14 : 11));
+  const steerSpeed = (state.driftBlend > 0.2 ? 12.5 : 11.2) / Math.sqrt(massFactor);
+  state.steerAngle += (targetSteer - state.steerAngle) * Math.min(1, dt * steerSpeed);
 
-  // Front/Rear axle dynamic weight transfer
-  const frontLoad = THREE.MathUtils.clamp(0.5 - state.longitudinalG * 0.15, 0.28, 0.74);
+  // Front/Rear axle dynamic weight transfer (stronger dive/squat on heavier chassis)
+  const frontLoad = THREE.MathUtils.clamp(
+    0.5 - state.longitudinalG * (0.145 * massFactor),
+    0.28,
+    0.74,
+  );
   const rearLoad = 1.0 - frontLoad;
 
-  // Drift initiation regimes: Handbrake, Trail-Brake/High-G Flick, Power Oversteer, or Sustained Slide Momentum
+  // Intentional Drift initiation regimes (never washes out during normal cornering lifts)
   const handbrakeSlide = input.handbrake && speedMsTotal > 4.2;
-  const highSpeedFlick =
-    Math.abs(input.steer) > 0.52 &&
-    absPreForward > 15 &&
-    (input.brake > 0.08 || frontLoad > 0.51);
+  const trailBrakeFlick =
+    Math.abs(input.steer) > 0.58 &&
+    absPreForward > 16 &&
+    input.brake > 0.24;
   const powerOversteer =
-    effectiveThrottle > 0.62 &&
-    Math.abs(input.steer) > 0.36 &&
-    absPreForward > 7.5 &&
+    !options.tractionControl &&
+    effectiveThrottle > 0.72 &&
+    Math.abs(input.steer) > 0.56 &&
+    absPreForward > 10 &&
     (spec.drivetrain === 'RWD' || state.nitroActive || options.weather !== 'sunny');
-  const activeSlideMomentum = slipDegNow > 7.5 && speedMsTotal > 6.0;
+  const activeSlideMomentum = slipDegNow > 13.5 && speedMsTotal > 8.0 && Math.abs(input.steer) > 0.12;
 
   const wantDrift =
     handbrakeSlide ||
-    highSpeedFlick ||
-    (powerOversteer && (!options.tractionControl || Math.abs(input.steer) > 0.48)) ||
+    trailBrakeFlick ||
+    powerOversteer ||
     activeSlideMomentum;
 
-  const driftBlendTarget = handbrakeSlide ? 1.0 : wantDrift ? 0.92 : 0.0;
-  const blendRate = driftBlendTarget > state.driftBlend ? 10.5 : 2.8;
+  const driftBlendTarget = handbrakeSlide ? 1.0 : wantDrift ? 0.88 : 0.0;
+  const blendRate = driftBlendTarget > state.driftBlend ? 9.5 : 4.8;
   state.driftBlend += (driftBlendTarget - state.driftBlend) * Math.min(1, dt * blendRate);
 
-  // Yaw Rotation Dynamics (evaluated BEFORE projecting world velocity into new car frame so real slip emerges!)
-  const handlingFactor = 0.86 + (stats.handlingRating / 100) * 0.4;
-  const turnSign = preForward >= -0.2 ? 1 : -1;
-  const speedTurnFactor = Math.min(1, speedMsTotal / 3.8);
+  // Speed-normalized Yaw Rotation Dynamics (~1.3 rad/s city turns -> ~0.35 rad/s at 240+ km/h)
+  const handlingFactor = 0.90 + (stats.handlingRating / 100) * 0.34;
+  const turnSign = preForward >= -0.35 ? 1 : -1;
+  const speedTurnFactor = Math.min(1, speedMsTotal / 3.4);
+  const speedYawDamp = 1 / (1 + speedRatio * 1.85);
 
-  // Counter-steer detection: +steer turns right (-heading) -> +preLateral; counter-steer is -steer -> opposite sign
-  const isCounterSteering = input.steer * preLateral < -0.25 && Math.abs(preLateral) > 2.0;
+  // Weight on front tires sharpens turn-in cleanly without twitchy snap
+  const frontBite = THREE.MathUtils.clamp(0.88 + frontLoad * 0.24 - speedRatio * 0.06, 0.78, 1.10);
+
+  // Counter-steer detection: crisp catch when opposite-locking out of a drift
+  const isCounterSteering = input.steer * preLateral < -0.22 && Math.abs(preLateral) > 1.8;
   const yawSteerAuthority = input.handbrake
-    ? 1.55
-    : state.driftBlend > 0.3
+    ? 1.52
+    : state.driftBlend > 0.25
       ? isCounterSteering
-        ? 1.32
-        : 1.42
-      : 1.0;
+        ? 1.48
+        : 1.28
+      : frontBite;
 
   let targetYawRate =
     state.steerAngle *
-    2.95 *
+    2.42 *
+    speedYawDamp *
     handlingFactor *
     speedTurnFactor *
     turnSign *
@@ -242,16 +277,18 @@ export function stepVehiclePhysics(
 
   // Handbrake rear-end breakaway kick
   if (handbrakeSlide && Math.abs(input.steer) > 0.12) {
-    targetYawRate += -Math.sign(input.steer) * 0.78;
+    targetYawRate += -Math.sign(input.steer) * 0.62;
   }
 
-  // Front-wheel caster self-alignment: pulls car heading (+heading when preLateral > 0) toward velocity vector
-  if (Math.abs(preLateral) > 1.5 && absPreForward > 5.0) {
-    const casterRate = isCounterSteering ? 0.65 : 0.42;
-    targetYawRate += Math.sign(preLateral) * Math.min(1.8, slipDegNow / 20) * casterRate;
+  // Front-wheel caster self-alignment & Traction Control yaw stabilization
+  if (Math.abs(preLateral) > 1.2 && absPreForward > 5.0) {
+    const casterRate = isCounterSteering ? 0.38 : options.tractionControl ? 0.44 : 0.30;
+    targetYawRate += Math.sign(preLateral) * Math.min(1.3, slipDegNow / 24) * casterRate;
   }
 
-  state.angularVel += (targetYawRate - state.angularVel) * Math.min(1, dt * 11.5);
+  // Responsive rotational inertia (snappy enough for touch & keyboard, planted weight feel)
+  const yawInertiaRate = 12.8 / Math.pow(massFactor, 0.55);
+  state.angularVel += (targetYawRate - state.angularVel) * Math.min(1, dt * yawInertiaRate);
   state.heading += state.angularVel * dt;
 
   // Project existing world velocity (vx, vz) onto the NEW rotated vehicle frame -> authentic kinematic slip!
@@ -278,9 +315,10 @@ export function stepVehiclePhysics(
       }
     }
   } else {
-    if (input.brake > 0.25 && prevForward < 1.2 && effectiveThrottle < 0.1) {
+    if (input.brake > 0.2 && prevForward <= 1.0 && effectiveThrottle < 0.08) {
       state.gear = -1;
-    } else if (effectiveThrottle > 0.1 && state.gear === -1 && prevForward > -0.8) {
+    } else if (effectiveThrottle > 0.08 && state.gear === -1) {
+      // Pressing gas while in Reverse immediately switches back to 1st gear cleanly
       state.gear = 1;
     } else if (state.gear > 0) {
       const rpmEst = (absSpeedMs / (maxSpeedMs / GEAR_RATIOS[state.gear])) * maxRpm;
@@ -318,9 +356,9 @@ export function stepVehiclePhysics(
 
   if (state.gear === -1) {
     if (input.brake > 0.05 && prevForward <= 1.0) {
-      forwardAccel = -accelBase * 0.58 * input.brake;
+      forwardAccel = -accelBase * 0.62 * input.brake;
     } else if (effectiveThrottle > 0.05) {
-      forwardAccel = accelBase * 0.65 * effectiveThrottle;
+      forwardAccel = accelBase * 0.92 * effectiveThrottle;
     }
   } else {
     if (effectiveThrottle > 0.02) {
@@ -333,22 +371,26 @@ export function stepVehiclePhysics(
         driveForce *= 0.9;
         state.tcsActive = true;
       }
+      // Strong forward launch catch when pulling out of slow reverse momentum
+      if (prevForward < -0.2) {
+        driveForce += 18.0 * effectiveThrottle;
+      }
       forwardAccel += driveForce;
     }
     if (input.brake > 0.02) {
-      const brakeStrength = (27 + (stats.brakingRating / 100) * 16) * totalGrip;
+      const brakeStrength = (29 + (stats.brakingRating / 100) * 16) * totalGrip;
       if (prevForward > 0.5) {
         state.absActive = options.abs && input.brake > 0.72;
-        forwardAccel -= brakeStrength * input.brake * (options.abs ? 1.05 : 0.9);
+        forwardAccel -= brakeStrength * input.brake * (options.abs ? 1.08 : 0.92);
       } else if (effectiveThrottle < 0.05 && options.transmission === 'auto') {
-        forwardAccel -= accelBase * 0.45 * input.brake;
+        forwardAccel -= accelBase * 0.55 * input.brake;
       }
     }
   }
 
   // Handbrake initiates rear breakaway without stalling forward drift momentum
   if (input.handbrake && absSpeedMs > 1.5) {
-    const scrub = effectiveThrottle > 0.4 ? 2.6 : 5.8;
+    const scrub = effectiveThrottle > 0.4 ? 2.4 : 5.8;
     forwardAccel -= Math.sign(prevForward) * scrub * totalGrip;
   }
 
@@ -369,9 +411,9 @@ export function stepVehiclePhysics(
     nextForward += (maxSpeedMs - nextForward) * Math.min(1, dt * 4.5);
   }
 
-  // Two-Regime Pacejka Lateral Tire Grip Decay
-  const gripDamp = 9.5 * totalGrip * handlingFactor * (0.72 + rearLoad * 0.56);
-  const slideDamp = (input.handbrake ? 1.25 : 2.15) * totalGrip;
+  // Two-Regime Pacejka Lateral Tire Grip Decay (high crisp lateral bite during grip driving)
+  const gripDamp = 10.6 * totalGrip * handlingFactor * (0.76 + rearLoad * 0.48);
+  const slideDamp = (input.handbrake ? 1.45 : 2.35) * totalGrip;
   const lateralGrip = THREE.MathUtils.lerp(gripDamp, slideDamp, state.driftBlend);
 
   const nextLateral = prevLateral * Math.exp(-lateralGrip * dt);
@@ -380,7 +422,7 @@ export function stepVehiclePhysics(
   if (state.driftBlend < 0.35 && prevForward > 5) {
     const speedBeforeGrip = Math.hypot(prevForward, prevLateral);
     const speedAfterGrip = Math.hypot(nextForward, nextLateral);
-    const redirectBonus = Math.max(0, speedBeforeGrip - speedAfterGrip) * (1 - state.driftBlend * 2.2) * 0.65;
+    const redirectBonus = Math.max(0, speedBeforeGrip - speedAfterGrip) * (1 - state.driftBlend * 2.2) * 0.72;
     nextForward += redirectBonus;
   }
 
@@ -390,7 +432,7 @@ export function stepVehiclePhysics(
   state.x += state.vx * dt;
   state.z += state.vz * dt;
 
-  // Spline-Corridor Containment + Seamless Armco Steel Guardrail Deflection
+  // Spline-Corridor Containment + Realistic Guardrail Crash & Wall-Scrape Physics
   const proj = projectOntoTrack(state.x, state.z, state.stationIdx);
   state.stationIdx = proj.stationIdx;
   state.trackProgress = proj.station.s;
@@ -399,30 +441,77 @@ export function stepVehiclePhysics(
   if (Math.abs(proj.lateralOffset) > guardLimit) {
     const side = Math.sign(proj.lateralOffset);
     const excess = Math.abs(proj.lateralOffset) - guardLimit;
-    const nx = proj.station.rx * side;
+    const nx = proj.station.rx * side; // Outward normal toward barrier
     const nz = proj.station.rz * side;
 
     state.x -= nx * excess;
     state.z -= nz * excess;
 
     const vOutward = state.vx * nx + state.vz * nz;
+    const tx = -nz;
+    const tz = nx;
+    const vTangential = state.vx * tx + state.vz * tz;
+    const totalSpeed = Math.hypot(state.vx, state.vz);
+
+    // Contact point along car's barrier-facing corner/flank
+    const impactSideX = -nx * (spec.dimensions.width * 0.46);
+    const impactSideZ = -nz * (spec.dimensions.width * 0.46);
+    const noseSign = preForward >= 0 ? 1 : -1;
+    const frontBias = Math.min(1, Math.abs(vOutward) / 14) * 0.55 + 0.35;
+    const contactX = state.x + impactSideX + newSin * (spec.dimensions.length * 0.36 * noseSign * frontBias);
+    const contactZ = state.z + impactSideZ + newCos * (spec.dimensions.length * 0.36 * noseSign * frontBias);
+
     if (vOutward > 0) {
-      const impact = Math.min(1, vOutward / 26);
-      state.vx -= 1.38 * vOutward * nx;
-      state.vz -= 1.38 * vOutward * nz;
-      state.vx *= 0.88;
-      state.vz *= 0.88;
+      const impact = Math.min(1.25, vOutward / 22);
+      // Heavy impacts bounce with realistic restitution & absorb crash energy; slight scrapes deflect cleanly
+      const restitution = impact > 0.35 ? 0.32 : 0.18;
+      state.vx -= (1 + restitution) * vOutward * nx;
+      state.vz -= (1 + restitution) * vOutward * nz;
+
+      // Friction scrub proportional to wall-normal force
+      const scrub = THREE.MathUtils.clamp(1 - impact * 0.22, 0.56, 0.97);
+      state.vx *= scrub;
+      state.vz *= scrub;
+
       if (impact > 0.14) {
         state.lastCollisionImpact = impact;
+        state.lastCollisionPointX = contactX;
+        state.lastCollisionPointY = state.y + 0.36;
+        state.lastCollisionPointZ = contactZ;
+        state.lastCollisionNx = -nx;
+        state.lastCollisionNz = -nz;
+        state.lastCollisionKind = 'rail';
+        state.damageLevel = Math.min(1, state.damageLevel + impact * 0.16);
+
+        // Controlled yaw kick & suspension slam on barrier impact (never spins driver uncontrollably backwards)
+        const crossSign = newSin * nz - newCos * nx;
+        state.angularVel += crossSign * impact * (2.1 / massFactor);
+        state.heaveVel -= Math.min(1.3, impact * 0.95);
+        state.pitchVel += impact * 1.15 * noseSign;
+        state.rollVel += side * impact * 1.45;
       }
+    }
+
+    // Continuous wall grinding friction + spark stream when sliding along guardrail
+    if (totalSpeed > 5.5 && Math.abs(vTangential) > 4.0) {
+      const scrape = THREE.MathUtils.clamp(totalSpeed / 48, 0.12, 1.0);
+      state.railScrapeIntensity = Math.max(state.railScrapeIntensity, scrape);
+      const railDrag = Math.exp(-0.65 * dt);
+      state.vx *= railDrag;
+      state.vz *= railDrag;
+      state.lastCollisionPointX = contactX;
+      state.lastCollisionPointY = state.y + 0.32;
+      state.lastCollisionPointZ = contactZ;
+      state.lastCollisionNx = -nx;
+      state.lastCollisionNz = -nz;
     }
 
     const railHeading = Math.atan2(proj.station.tx, proj.station.tz);
     let hDiff = railHeading - state.heading;
     while (hDiff > Math.PI) hDiff -= Math.PI * 2;
     while (hDiff < -Math.PI) hDiff += Math.PI * 2;
-    if (Math.abs(hDiff) < 0.75) {
-      state.heading += hDiff * Math.min(1, dt * 3.5);
+    if (Math.abs(hDiff) < 0.78) {
+      state.heading += hDiff * Math.min(1, dt * 3.8);
     }
   }
 
@@ -433,41 +522,87 @@ export function stepVehiclePhysics(
 
   const groundY = finalProj.surfaceY;
   if (state.y > groundY + 0.12) {
-    state.vy -= 19.0 * dt;
+    state.vy -= 19.6 * dt;
     state.y += state.vy * dt;
     state.grounded = false;
   }
   if (state.y <= groundY) {
-    if (state.vy < -5) {
-      state.heaveY = Math.max(-0.12, state.vy * 0.015);
+    if (state.vy < -4.2) {
+      const landImpact = THREE.MathUtils.clamp(-state.vy / 20, 0.14, 1.0);
+      state.heaveVel += Math.max(-1.4, state.vy * 0.11);
+      state.pitchVel += landImpact * 0.6;
+      if (landImpact > 0.25 && state.lastCollisionKind === 'none') {
+        state.lastCollisionImpact = Math.max(state.lastCollisionImpact, landImpact * 0.65);
+        state.lastCollisionPointX = state.x;
+        state.lastCollisionPointY = groundY + 0.1;
+        state.lastCollisionPointZ = state.z;
+        state.lastCollisionNx = 0;
+        state.lastCollisionNz = 0;
+        state.lastCollisionKind = 'landing';
+      }
     }
     state.y = groundY;
     state.vy = 0;
     state.grounded = true;
   }
 
-  // Smooth bank, grade & dynamic suspension G-forces
+  // Smooth bank, grade & true 2nd-order Spring-Damper Suspension Weight Feel
   const targetBank = finalProj.bankRad;
   const targetGrade = -Math.asin(THREE.MathUtils.clamp(finalProj.station.ty, -0.5, 0.5));
   state.trackBankRad += (targetBank - state.trackBankRad) * Math.min(1, dt * 8);
   state.trackPitchRad += (targetGrade - state.trackPitchRad) * Math.min(1, dt * 8);
 
-  state.longitudinalG = THREE.MathUtils.clamp(forwardAccel / 9.81, -2.5, 2.5);
-  state.lateralG = THREE.MathUtils.clamp((nextForward * state.angularVel) / 9.81, -2.8, 2.8);
+  state.longitudinalG = THREE.MathUtils.clamp(forwardAccel / 9.81, -2.8, 2.8);
+  state.lateralG = THREE.MathUtils.clamp((nextForward * state.angularVel) / 9.81, -3.2, 3.2);
 
-  const dynPitch = -THREE.MathUtils.clamp(
-    forwardAccel * 0.0028 + (state.nitroActive ? 0.016 : 0),
-    -0.068,
-    0.068,
+  // Stiffened suspension upgrades reduce body roll & dive while heavy mass increases weight transfer
+  const suspStiffMult = 1 + upgrades.suspension * 0.14;
+  const compliance = massFactor / suspStiffMult;
+
+  const surfaceChatter =
+    state.grounded && state.surface !== 'asphalt'
+      ? Math.sin(state.x * 2.1 + state.z * 1.9) * Math.min(1, speedMsTotal / 18) * 0.032
+      : state.grounded && speedMsTotal > 22
+        ? Math.sin(state.x * 1.1 + state.z * 1.1) * 0.004
+        : 0;
+
+  // Gear shift longitudinal torque kick
+  if (state.justShifted) {
+    state.pitchVel -= 0.42 * compliance;
+    state.heaveVel -= 0.14 * compliance;
+  }
+
+  const targetPitch = -THREE.MathUtils.clamp(
+    (forwardAccel * 0.0036 + (state.nitroActive ? 0.022 : 0)) * compliance,
+    -0.088,
+    0.088,
   );
-  const dynRoll = THREE.MathUtils.clamp(
-    (nextLateral * 0.0085 + state.lateralG * 0.018),
-    -0.085,
-    0.085,
+  const targetRoll = THREE.MathUtils.clamp(
+    (nextLateral * 0.0105 + state.lateralG * 0.024) * compliance,
+    -0.11,
+    0.11,
   );
-  state.pitchRad += (dynPitch - state.pitchRad) * Math.min(1, dt * 9);
-  state.rollRad += (dynRoll - state.rollRad) * Math.min(1, dt * 9);
-  state.heaveY += (0 - state.heaveY) * Math.min(1, dt * 10);
+  const targetHeave = THREE.MathUtils.clamp(
+    surfaceChatter - Math.abs(state.lateralG) * 0.008 * compliance,
+    -0.09,
+    0.09,
+  );
+
+  // Damped harmonic spring integration for authentic weight & rebound
+  const pitchStiff = 82 * suspStiffMult / massFactor;
+  const pitchDamp = 12.2 / Math.sqrt(massFactor);
+  state.pitchVel += ((targetPitch - state.pitchRad) * pitchStiff - state.pitchVel * pitchDamp) * dt;
+  state.pitchRad = THREE.MathUtils.clamp(state.pitchRad + state.pitchVel * dt, -0.14, 0.14);
+
+  const rollStiff = 92 * suspStiffMult / massFactor;
+  const rollDamp = 13.0 / Math.sqrt(massFactor);
+  state.rollVel += ((targetRoll - state.rollRad) * rollStiff - state.rollVel * rollDamp) * dt;
+  state.rollRad = THREE.MathUtils.clamp(state.rollRad + state.rollVel * dt, -0.16, 0.16);
+
+  const heaveStiff = 125 * suspStiffMult / massFactor;
+  const heaveDamp = 15.0 / Math.sqrt(massFactor);
+  state.heaveVel += ((targetHeave - state.heaveY) * heaveStiff - state.heaveVel * heaveDamp) * dt;
+  state.heaveY = THREE.MathUtils.clamp(state.heaveY + state.heaveVel * dt, -0.14, 0.14);
 
   // Telemetry & Drift Scoring
   state.forwardSpeedMs = nextForward;

@@ -14,10 +14,13 @@ export interface BuiltWorld {
   worldGroup: THREE.Group;
   asphaltRoadMat: THREE.MeshStandardMaterial;
   checkpointBeacon: THREE.Group;
+  lampPositions: Array<{ x: number; y: number; z: number }>;
   updateDynamicWorld: (
     timeSec: number,
     isWet: boolean,
     nightFactor?: number,
+    playerX?: number,
+    playerZ?: number,
   ) => void;
   dispose: () => void;
 }
@@ -333,14 +336,22 @@ function attachWindSway(
   material: THREE.MeshStandardMaterial,
   windUniform: { value: number },
   mode: 'grass' | 'palm' | 'pine',
+  playerPosUniform?: { value: THREE.Vector2 },
+  cullRange?: [number, number],
 ): void {
+  const hasCull = Boolean(playerPosUniform && cullRange);
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWindTime = windUniform;
+    if (hasCull && playerPosUniform && cullRange) {
+      shader.uniforms.uPlayerXZ = playerPosUniform;
+      shader.uniforms.uCullRange = { value: new THREE.Vector2(cullRange[0], cullRange[1]) };
+    }
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
-         uniform float uWindTime;`,
+         uniform float uWindTime;
+         ${hasCull ? 'uniform vec2 uPlayerXZ; uniform vec2 uCullRange;' : ''}`,
       )
       .replace(
         '#include <begin_vertex>',
@@ -349,6 +360,16 @@ function attachWindSway(
            #ifdef USE_INSTANCING
              vec4 wOrigin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
              float phase = wOrigin.x * 0.13 + wOrigin.z * 0.11 + uWindTime * 2.05;
+             ${
+               hasCull
+                 ? `float dPlayer = distance(wOrigin.xz, uPlayerXZ);
+                    float dScale = 1.0 - smoothstep(uCullRange.x, uCullRange.y, dPlayer);
+                    if (dScale <= 0.01) {
+                      transformed = vec3(0.0);
+                    } else {
+                      transformed *= dScale;`
+                 : ''
+             }
            #else
              float phase = uWindTime * 2.05;
            #endif
@@ -368,10 +389,60 @@ function attachWindSway(
                     transformed.x += sway;
                     transformed.z += cos(phase * 0.55) * 0.06 * w;`
            }
+           ${hasCull ? '#ifdef USE_INSTANCING\n}\n#endif' : ''}
          }`,
       );
   };
-  material.customProgramCacheKey = () => `wind_${mode}`;
+  material.customProgramCacheKey = () =>
+    `wind_${mode}_${hasCull && cullRange ? `${cullRange[0]}_${cullRange[1]}` : 'all'}`;
+}
+
+// Partition static instanced world foliage into a 3x3 spatial grid so camera & shadow frustum culling skip off-screen chunks
+function createSpatialChunkInstanced<T extends { x: number; z: number }>(
+  worldGroup: THREE.Group,
+  items: T[],
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  instancesPerItem: number,
+  castShadow: boolean,
+  receiveShadow: boolean,
+  writeItem: (item: T, itemIdx: number, pushInstance: (matrix: THREE.Matrix4, color?: THREE.Color) => void) => void,
+): void {
+  if (items.length === 0) return;
+  const gridN = 3;
+  const buckets: number[][] = Array.from({ length: gridN * gridN }, () => []);
+  const span = WORLD_HALF_SIZE * 2;
+  for (let i = 0; i < items.length; i++) {
+    const gx = THREE.MathUtils.clamp(Math.floor(((items[i].x + WORLD_HALF_SIZE) / span) * gridN), 0, gridN - 1);
+    const gz = THREE.MathUtils.clamp(Math.floor(((items[i].z + WORLD_HALF_SIZE) / span) * gridN), 0, gridN - 1);
+    buckets[gz * gridN + gx].push(i);
+  }
+
+  for (const bucket of buckets) {
+    if (bucket.length === 0) continue;
+    const inst = new THREE.InstancedMesh(geo, mat, bucket.length * instancesPerItem);
+    inst.castShadow = castShadow;
+    inst.receiveShadow = receiveShadow;
+    let cursor = 0;
+    let hasColor = false;
+    const pushInstance = (matrix: THREE.Matrix4, color?: THREE.Color) => {
+      inst.setMatrixAt(cursor, matrix);
+      if (color) {
+        inst.setColorAt(cursor, color);
+        hasColor = true;
+      }
+      cursor++;
+    };
+    for (let k = 0; k < bucket.length; k++) {
+      const idx = bucket[k];
+      writeItem(items[idx], idx, pushInstance);
+    }
+    inst.count = cursor;
+    inst.instanceMatrix.needsUpdate = true;
+    if (hasColor && inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    inst.computeBoundingSphere();
+    worldGroup.add(inst);
+  }
 }
 
 export function buildRealFumaWorld(
@@ -380,11 +451,13 @@ export function buildRealFumaWorld(
   const worldGroup = new THREE.Group();
   const disposables: Array<{ dispose: () => void }> = [];
   const dummy = new THREE.Object3D();
+  const tmpInstanceColor = new THREE.Color();
   const windUniform = { value: 0 };
+  const playerPosUniform = { value: new THREE.Vector2(0, 0) };
 
-  // 1. High-Density Road-Carved Peninsula Terrain (~7m grid resolution + normal relief)
+  // 1. Road-Carved Peninsula Terrain (~10.5m grid resolution + normal relief)
   const terrainSize = WORLD_HALF_SIZE * 2;
-  const segs = 250;
+  const segs = 172;
   const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segs, segs);
   terrainGeo.rotateX(-Math.PI / 2);
 
@@ -847,40 +920,35 @@ export function buildRealFumaWorld(
     const coconutMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.85 });
 
     const frondsPerTree = 11;
-    const pTrunkInst = new THREE.InstancedMesh(pTrunkGeo, pTrunkMat, palmSpots.length);
-    const pFrondInst = new THREE.InstancedMesh(frondGeo, frondMat, palmSpots.length * frondsPerTree);
-    const cocoInst = new THREE.InstancedMesh(coconutGeo, coconutMat, palmSpots.length * 3);
-    pTrunkInst.castShadow = true;
-    pTrunkInst.receiveShadow = true;
-    pFrondInst.castShadow = true;
-    pFrondInst.receiveShadow = true;
-
-    let fIdx = 0;
-    let cocoIdx = 0;
-    palmSpots.forEach((p, idx) => {
+    createSpatialChunkInstanced(worldGroup, palmSpots, pTrunkGeo, pTrunkMat, 1, true, true, (p, idx, push) => {
       const yawTree = idx * 0.72;
-      const topX = p.x + Math.cos(-yawTree) * 0.65 * p.s + Math.sin(p.lean) * 1.15;
-      const topZ = p.z + Math.sin(-yawTree) * 0.65 * p.s;
-      const topY = p.y + 10.2 * p.s;
-
       dummy.position.set(p.x, p.y + 5.1 * p.s, p.z);
       dummy.rotation.set(0, yawTree, -p.lean * 0.75);
       dummy.scale.set(p.s, p.s, p.s);
       dummy.updateMatrix();
-      pTrunkInst.setMatrixAt(idx, dummy.matrix);
-
-      // Coconut cluster under fronds
+      push(dummy.matrix);
+    });
+    createSpatialChunkInstanced(worldGroup, palmSpots, coconutGeo, coconutMat, 3, false, false, (p, idx, push) => {
+      const yawTree = idx * 0.72;
+      const topX = p.x + Math.cos(-yawTree) * 0.65 * p.s + Math.sin(p.lean) * 1.15;
+      const topZ = p.z + Math.sin(-yawTree) * 0.65 * p.s;
+      const topY = p.y + 10.2 * p.s;
       for (let c = 0; c < 3; c++) {
         const ca = (c / 3) * Math.PI * 2 + idx;
         dummy.position.set(topX + Math.cos(ca) * 0.25, topY - 0.35, topZ + Math.sin(ca) * 0.25);
         dummy.rotation.set(0, ca, 0);
         dummy.scale.setScalar(p.s);
         dummy.updateMatrix();
-        cocoInst.setMatrixAt(cocoIdx++, dummy.matrix);
+        push(dummy.matrix);
       }
-
+    });
+    createSpatialChunkInstanced(worldGroup, palmSpots, frondGeo, frondMat, frondsPerTree, true, true, (p, idx, push) => {
+      const yawTree = idx * 0.72;
+      const topX = p.x + Math.cos(-yawTree) * 0.65 * p.s + Math.sin(p.lean) * 1.15;
+      const topZ = p.z + Math.sin(-yawTree) * 0.65 * p.s;
+      const topY = p.y + 10.2 * p.s;
       for (let f = 0; f < frondsPerTree; f++) {
-        const tier = f < 5 ? 0 : 1; // upper & lower crown ring
+        const tier = f < 5 ? 0 : 1;
         const yaw = (f / frondsPerTree) * Math.PI * 2 + idx * 0.55;
         const pitch = tier === 0 ? -0.18 + (f % 2) * 0.12 : 0.14 + (f % 3) * 0.1;
         dummy.position.set(topX, topY - tier * 0.18, topZ);
@@ -888,22 +956,9 @@ export function buildRealFumaWorld(
         const fs = p.s * (tier === 0 ? 0.88 : 1.04);
         dummy.scale.set(fs, fs, fs);
         dummy.updateMatrix();
-        pFrondInst.setMatrixAt(fIdx, dummy.matrix);
-        pFrondInst.setColorAt(
-          fIdx,
-          new THREE.Color().setHSL(0.26 + (f % 3) * 0.018, 0.52, 0.56 + (f % 2) * 0.12),
-        );
-        fIdx++;
+        push(dummy.matrix, tmpInstanceColor.setHSL(0.26 + (f % 3) * 0.018, 0.52, 0.56 + (f % 2) * 0.12));
       }
     });
-    pTrunkInst.instanceMatrix.needsUpdate = true;
-    pFrondInst.instanceMatrix.needsUpdate = true;
-    cocoInst.instanceMatrix.needsUpdate = true;
-    if (pFrondInst.instanceColor) pFrondInst.instanceColor.needsUpdate = true;
-    pTrunkInst.computeBoundingSphere();
-    pFrondInst.computeBoundingSphere();
-    cocoInst.computeBoundingSphere();
-    worldGroup.add(pTrunkInst, pFrondInst, cocoInst);
     disposables.push(pTrunkGeo, pTrunkMat, frondGeo, frondMat, coconutGeo, coconutMat);
   }
 
@@ -940,22 +995,15 @@ export function buildRealFumaWorld(
     attachWindSway(foliageMat, windUniform, 'pine');
 
     const tiers = 4;
-    const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, pineSpots.length);
-    const boughInst = new THREE.InstancedMesh(boughGeo, foliageMat, pineSpots.length * tiers);
-    trunkInst.castShadow = true;
-    trunkInst.receiveShadow = true;
-    boughInst.castShadow = true;
-    boughInst.receiveShadow = true;
-
-    let cIdx = 0;
-    pineSpots.forEach((p, idx) => {
+    createSpatialChunkInstanced(worldGroup, pineSpots, trunkGeo, trunkMat, 1, true, true, (p, idx, push) => {
       dummy.position.set(p.x, p.y + 3.6 * p.s, p.z);
       dummy.scale.set(p.s, p.s, p.s);
       dummy.rotation.set(0, idx * 0.7, 0);
       dummy.updateMatrix();
-      trunkInst.setMatrixAt(idx, dummy.matrix);
-
-      const col = new THREE.Color().setHSL(
+      push(dummy.matrix);
+    });
+    createSpatialChunkInstanced(worldGroup, pineSpots, boughGeo, foliageMat, tiers, true, true, (p, idx, push) => {
+      tmpInstanceColor.setHSL(
         0.32 + (idx % 4) * 0.015,
         0.44,
         0.52 + (idx % 3) * 0.09,
@@ -967,17 +1015,9 @@ export function buildRealFumaWorld(
         dummy.scale.set(w, h, w);
         dummy.rotation.set(0, idx * 0.9 + t * 0.78, 0);
         dummy.updateMatrix();
-        boughInst.setMatrixAt(cIdx, dummy.matrix);
-        boughInst.setColorAt(cIdx, col);
-        cIdx++;
+        push(dummy.matrix, tmpInstanceColor);
       }
     });
-    trunkInst.instanceMatrix.needsUpdate = true;
-    boughInst.instanceMatrix.needsUpdate = true;
-    if (boughInst.instanceColor) boughInst.instanceColor.needsUpdate = true;
-    trunkInst.computeBoundingSphere();
-    boughInst.computeBoundingSphere();
-    worldGroup.add(trunkInst, boughInst);
     disposables.push(trunkGeo, trunkMat, boughGeo, foliageMat);
   }
 
@@ -1052,17 +1092,6 @@ export function buildRealFumaWorld(
     attachWindSway(jungleCanopyMat, windUniform, 'pine');
 
     const clustersPerTree = 4;
-    const jTrunkInst = new THREE.InstancedMesh(jTrunkGeo, jTrunkMat, jungleSpots.length);
-    const jCrownInst = new THREE.InstancedMesh(
-      canopyGeo,
-      jungleCanopyMat,
-      jungleSpots.length * clustersPerTree,
-    );
-    jTrunkInst.castShadow = true;
-    jTrunkInst.receiveShadow = true;
-    jCrownInst.castShadow = true;
-    jCrownInst.receiveShadow = true;
-
     const clusterOffsets: Array<[number, number, number, number]> = [
       [0, 9.4, 0, 2.25],
       [-2.3, 8.2, 1.4, 1.78],
@@ -1070,14 +1099,14 @@ export function buildRealFumaWorld(
       [0.2, 8.0, -2.2, 1.82],
     ];
 
-    let jcIdx = 0;
-    jungleSpots.forEach((j, idx) => {
+    createSpatialChunkInstanced(worldGroup, jungleSpots, jTrunkGeo, jTrunkMat, 1, true, true, (j, _idx, push) => {
       dummy.position.set(j.x, j.y + 4.5 * j.s, j.z);
       dummy.rotation.set(0, j.yaw, 0);
       dummy.scale.set(j.s, j.s, j.s);
       dummy.updateMatrix();
-      jTrunkInst.setMatrixAt(idx, dummy.matrix);
-
+      push(dummy.matrix);
+    });
+    createSpatialChunkInstanced(worldGroup, jungleSpots, canopyGeo, jungleCanopyMat, clustersPerTree, true, true, (j, idx, push) => {
       const cosY = Math.cos(j.yaw);
       const sinY = Math.sin(j.yaw);
       for (let c = 0; c < clustersPerTree; c++) {
@@ -1088,25 +1117,14 @@ export function buildRealFumaWorld(
         dummy.rotation.set(0, j.yaw + c * 1.15, 0);
         dummy.scale.set(j.s * cs, j.s * cs * 0.78, j.s * cs);
         dummy.updateMatrix();
-        jCrownInst.setMatrixAt(jcIdx, dummy.matrix);
-        jCrownInst.setColorAt(
-          jcIdx,
-          new THREE.Color().setHSL(0.28 + ((idx + c) % 4) * 0.016, 0.48, 0.44 + ((idx + c) % 3) * 0.08),
-        );
-        jcIdx++;
+        push(dummy.matrix, tmpInstanceColor.setHSL(0.28 + ((idx + c) % 4) * 0.016, 0.48, 0.44 + ((idx + c) % 3) * 0.08));
       }
     });
-    jTrunkInst.instanceMatrix.needsUpdate = true;
-    jCrownInst.instanceMatrix.needsUpdate = true;
-    if (jCrownInst.instanceColor) jCrownInst.instanceColor.needsUpdate = true;
-    jTrunkInst.computeBoundingSphere();
-    jCrownInst.computeBoundingSphere();
-    worldGroup.add(jTrunkInst, jCrownInst);
     disposables.push(jTrunkGeo, jTrunkMat, canopyGeo, jungleCanopyMat);
 
-    // Dense Jungle Understory Shrubs & Bushes (760 instances)
+    // Dense Jungle Understory Shrubs & Bushes (580 distance-culled instances)
     const bushSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
-    for (let i = 0; i < 1100 && bushSpots.length < 760; i++) {
+    for (let i = 0; i < 900 && bushSpots.length < 580; i++) {
       const s = 0.18 + ((i * 17) % 1000) / 1000 * 0.34;
       const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
       if (st.hasTunnel || st.isBridge) continue;
@@ -1122,44 +1140,36 @@ export function buildRealFumaWorld(
       bushSpots.push({ x: bx, y: py - 0.1, z: bz, s: 0.75 + (i % 5) * 0.22, yaw: (i * 1.9) % (Math.PI * 2) });
     }
     if (bushSpots.length > 0) {
-      const bushInst = new THREE.InstancedMesh(canopyGeo, jungleCanopyMat, bushSpots.length);
-      bushInst.castShadow = true;
-      bushInst.receiveShadow = true;
-      bushSpots.forEach((b, idx) => {
+      const bushMat = jungleCanopyMat.clone();
+      attachWindSway(bushMat, windUniform, 'pine', playerPosUniform, [175, 255]);
+      disposables.push(bushMat);
+      createSpatialChunkInstanced(worldGroup, bushSpots, canopyGeo, bushMat, 1, false, true, (b, idx, push) => {
         dummy.position.set(b.x, b.y + 0.7 * b.s, b.z);
         dummy.rotation.set(0, b.yaw, 0);
         dummy.scale.set(b.s * 1.15, b.s * 0.85, b.s * 1.15);
         dummy.updateMatrix();
-        bushInst.setMatrixAt(idx, dummy.matrix);
-        bushInst.setColorAt(
-          idx,
-          new THREE.Color().setHSL(0.26 + (idx % 5) * 0.015, 0.5, 0.4 + (idx % 4) * 0.07),
-        );
+        push(dummy.matrix, tmpInstanceColor.setHSL(0.26 + (idx % 5) * 0.015, 0.5, 0.4 + (idx % 4) * 0.07));
       });
-      bushInst.instanceMatrix.needsUpdate = true;
-      if (bushInst.instanceColor) bushInst.instanceColor.needsUpdate = true;
-      bushInst.computeBoundingSphere();
-      worldGroup.add(bushInst);
     }
   }
 
-  // 9c. Giant Tropical Jungle Ferns (1,850 Ground-Cover Crowns in Palm Canyon & Humid Valleys)
+  // 9c. Giant Tropical Jungle Ferns (1,050 Distance-Culled Ground-Cover Crowns in Palm Canyon)
   const fernSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
-  for (let i = 0; i < 2800 && fernSpots.length < 1850; i++) {
+  for (let i = 0; i < 1800 && fernSpots.length < 1050; i++) {
     let fx = 0;
     let fz = 0;
-    if (i < 1600) {
+    if (i < 950) {
       const s = 0.16 + ((i * 23) % 1000) / 1000 * 0.37;
       const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
       if (st.hasTunnel || st.isBridge) continue;
       const side = i % 2 === 0 ? 1 : -1;
-      const dist = st.roadWidth * 0.5 + 2.5 + ((i * 31) % 100) * 0.36;
+      const dist = st.roadWidth * 0.5 + 2.5 + ((i * 31) % 100) * 0.34;
       fx = st.x + st.rx * (side * dist) + Math.sin(i * 1.4) * 2.0;
       fz = st.z + st.rz * (side * dist) + Math.cos(i * 2.1) * 2.0;
     } else {
-      const k = i - 1600;
+      const k = i - 950;
       const a = k * 2.399963;
-      const rad = 18 + Math.sqrt(k / 1200) * 240;
+      const rad = 18 + Math.sqrt(k / 850) * 210;
       fx = -225 + Math.cos(a) * rad;
       fz = -345 + Math.sin(a) * rad;
     }
@@ -1179,25 +1189,14 @@ export function buildRealFumaWorld(
       roughness: 0.74,
       metalness: 0.02,
     });
-    attachWindSway(fernMat, windUniform, 'grass');
-    const fernInst = new THREE.InstancedMesh(fernGeo, fernMat, fernSpots.length);
-    fernInst.receiveShadow = true;
-    fernInst.castShadow = false;
-    fernSpots.forEach((f, idx) => {
+    attachWindSway(fernMat, windUniform, 'grass', playerPosUniform, [115, 175]);
+    createSpatialChunkInstanced(worldGroup, fernSpots, fernGeo, fernMat, 1, false, true, (f, idx, push) => {
       dummy.position.set(f.x, f.y, f.z);
       dummy.rotation.set(0, f.yaw, 0);
       dummy.scale.set(f.s, f.s, f.s);
       dummy.updateMatrix();
-      fernInst.setMatrixAt(idx, dummy.matrix);
-      fernInst.setColorAt(
-        idx,
-        new THREE.Color().setHSL(0.27 + (idx % 4) * 0.015, 0.52, 0.46 + (idx % 3) * 0.08),
-      );
+      push(dummy.matrix, tmpInstanceColor.setHSL(0.27 + (idx % 4) * 0.015, 0.52, 0.46 + (idx % 3) * 0.08));
     });
-    fernInst.instanceMatrix.needsUpdate = true;
-    if (fernInst.instanceColor) fernInst.instanceColor.needsUpdate = true;
-    fernInst.computeBoundingSphere();
-    worldGroup.add(fernInst);
     disposables.push(fernGeo, fernMat);
   }
 
@@ -1240,37 +1239,24 @@ export function buildRealFumaWorld(
     });
     attachWindSway(plumeMat, windUniform, 'pine');
 
-    const cyTrunkInst = new THREE.InstancedMesh(cyTrunkGeo, cyTrunkMat, cypressSpots.length);
-    const plumeInst = new THREE.InstancedMesh(plumeGeo, plumeMat, cypressSpots.length * 2);
-    cyTrunkInst.castShadow = true;
-    cyTrunkInst.receiveShadow = true;
-    plumeInst.castShadow = true;
-    plumeInst.receiveShadow = true;
-
-    cypressSpots.forEach((c, idx) => {
+    createSpatialChunkInstanced(worldGroup, cypressSpots, cyTrunkGeo, cyTrunkMat, 1, true, true, (c, idx, push) => {
       dummy.position.set(c.x, c.y + 3.5 * c.s, c.z);
       dummy.rotation.set(0, idx * 0.85, 0);
       dummy.scale.set(c.s, c.s, c.s);
       dummy.updateMatrix();
-      cyTrunkInst.setMatrixAt(idx, dummy.matrix);
-
-      const col = new THREE.Color().setHSL(0.36 + (idx % 4) * 0.015, 0.38, 0.45 + (idx % 3) * 0.08);
+      push(dummy.matrix);
+    });
+    createSpatialChunkInstanced(worldGroup, cypressSpots, plumeGeo, plumeMat, 2, true, true, (c, idx, push) => {
+      tmpInstanceColor.setHSL(0.36 + (idx % 4) * 0.015, 0.38, 0.45 + (idx % 3) * 0.08);
       for (let tier = 0; tier < 2; tier++) {
         const ts = c.s * (tier === 0 ? 1.15 : 0.85);
         dummy.position.set(c.x, c.y + (2.6 + tier * 3.1) * c.s, c.z);
         dummy.rotation.set(0, idx * 1.1 + tier * 0.6, 0);
         dummy.scale.set(ts, ts * 1.15, ts);
         dummy.updateMatrix();
-        plumeInst.setMatrixAt(idx * 2 + tier, dummy.matrix);
-        plumeInst.setColorAt(idx * 2 + tier, col);
+        push(dummy.matrix, tmpInstanceColor);
       }
     });
-    cyTrunkInst.instanceMatrix.needsUpdate = true;
-    plumeInst.instanceMatrix.needsUpdate = true;
-    if (plumeInst.instanceColor) plumeInst.instanceColor.needsUpdate = true;
-    cyTrunkInst.computeBoundingSphere();
-    plumeInst.computeBoundingSphere();
-    worldGroup.add(cyTrunkInst, plumeInst);
     disposables.push(cyTrunkGeo, cyTrunkMat, plumeGeo, plumeMat);
   }
 
@@ -1316,20 +1302,14 @@ export function buildRealFumaWorld(
     });
     attachWindSway(blCrownMat, windUniform, 'pine');
 
-    const blTrunkInst = new THREE.InstancedMesh(blTrunkGeo, blTrunkMat, blossomSpots.length);
-    const blCrownInst = new THREE.InstancedMesh(blCrownGeo, blCrownMat, blossomSpots.length * 2);
-    blTrunkInst.castShadow = true;
-    blTrunkInst.receiveShadow = true;
-    blCrownInst.castShadow = true;
-    blCrownInst.receiveShadow = true;
-
-    blossomSpots.forEach((b, idx) => {
+    createSpatialChunkInstanced(worldGroup, blossomSpots, blTrunkGeo, blTrunkMat, 1, true, true, (b, idx, push) => {
       dummy.position.set(b.x, b.y + 2.2 * b.s, b.z);
       dummy.rotation.set(0, idx * 1.2, 0);
       dummy.scale.set(b.s, b.s, b.s);
       dummy.updateMatrix();
-      blTrunkInst.setMatrixAt(idx, dummy.matrix);
-
+      push(dummy.matrix);
+    });
+    createSpatialChunkInstanced(worldGroup, blossomSpots, blCrownGeo, blCrownMat, 2, true, true, (b, idx, push) => {
       for (let k = 0; k < 2; k++) {
         const off = k === 0 ? 0 : 1.1;
         dummy.position.set(b.x + off * 0.6, b.y + (4.5 + k * 0.7) * b.s, b.z - off * 0.4);
@@ -1337,58 +1317,47 @@ export function buildRealFumaWorld(
         const cs = b.s * (k === 0 ? 1.5 : 1.18);
         dummy.scale.set(cs, cs * 0.82, cs);
         dummy.updateMatrix();
-        blCrownInst.setMatrixAt(idx * 2 + k, dummy.matrix);
-        blCrownInst.setColorAt(idx * 2 + k, b.tint);
+        push(dummy.matrix, b.tint);
       }
     });
-    blTrunkInst.instanceMatrix.needsUpdate = true;
-    blCrownInst.instanceMatrix.needsUpdate = true;
-    if (blCrownInst.instanceColor) blCrownInst.instanceColor.needsUpdate = true;
-    blTrunkInst.computeBoundingSphere();
-    blCrownInst.computeBoundingSphere();
-    worldGroup.add(blTrunkInst, blCrownInst);
     disposables.push(blTrunkGeo, blTrunkMat, blCrownGeo, blCrownMat);
   }
 
-  // 10. Instanced Wind-Swayed Wild Roadside & Meadow Grass (11,000+ Tufts)
+  // 10. Instanced Wind-Swayed & Distance-Culled Roadside Grass (6,400 Tufts across 3x3 spatial tiles)
   const grassSpots: Array<{ x: number; y: number; z: number; sx: number; sy: number; yaw: number; tint: THREE.Color }> = [];
   const grassTint = new THREE.Color();
 
-  // Golden-angle spiral distribution centered near coastal/jungle/alpine corridors + dense roadside verges
-  for (let i = 0; i < 18500 && grassSpots.length < 11000; i++) {
+  for (let i = 0; i < 12000 && grassSpots.length < 6400; i++) {
     let gx = 0;
     let gz = 0;
-    if (i < 11500) {
-      // Dense multi-layered roadside verges & jungle shoulders around the full 3.8km highway loop
+    if (i < 8200) {
       const stIdx = (i * 11) % TRACK_STATION_COUNT;
       const st = TRACK_STATIONS[stIdx];
       if (st.isBridge) continue;
       const side = i % 2 === 0 ? 1 : -1;
-      const latDist = st.roadWidth * 0.5 + 2.0 + ((i * 37) % 100) * 0.34;
+      const latDist = st.roadWidth * 0.5 + 2.0 + ((i * 37) % 100) * 0.32;
       gx = st.x + st.rx * (side * latDist) + Math.sin(i * 1.7) * 2.2;
       gz = st.z + st.rz * (side * latDist) + Math.cos(i * 2.3) * 2.2;
     } else {
-      // Broader jungle/canyon/alpine/harbor meadows
-      const k = i - 11500;
+      const k = i - 8200;
       const a = k * 2.399963;
-      const r = 38 + Math.sqrt(k / 7000) * 790;
+      const r = 38 + Math.sqrt(k / 3800) * 760;
       gx = Math.cos(a) * r;
       gz = Math.sin(a) * r;
     }
 
     if (Math.abs(gx) > WORLD_HALF_SIZE - 18 || Math.abs(gz) > WORLD_HALF_SIZE - 18) continue;
     const py = getTerrainHeight(gx, gz);
-    if (py < 0.9 || py > 40) continue; // Strictly above sea/beach sand & below alpine snowpeaks
+    if (py < 0.9 || py > 40) continue;
 
     const hx = getTerrainHeight(gx + 3, gz);
     const hz = getTerrainHeight(gx, gz + 3);
     const slope = Math.hypot(hx - py, hz - py) / 3;
-    if (slope > 0.48) continue; // Not on sheer vertical rock faces
+    if (slope > 0.48) continue;
 
     const proj = projectOntoTrack(gx, gz);
-    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.85) continue; // Keep tarmac & curbs clear
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.85) continue;
 
-    // Biome color harmony: lush emerald jungle in Palm Canyon, warm coastal olive in Sunset Coast, deep forest in Alpine
     if (gx < 60 && gz < -280) {
       grassTint.setHSL(0.27 + (i % 5) * 0.014, 0.54, 0.42 + (i % 4) * 0.06);
     } else if (gx < -140 && gz > -460 && gz < 440) {
@@ -1401,10 +1370,10 @@ export function buildRealFumaWorld(
 
     grassSpots.push({
       x: gx,
-      y: py - 0.05, // sink root slightly into soil so zero floating gaps on slopes
+      y: py - 0.05,
       z: gz,
-      sx: 0.9 + (i % 5) * 0.18,
-      sy: 0.78 + (i % 6) * 0.17,
+      sx: 0.94 + (i % 5) * 0.18,
+      sy: 0.8 + (i % 6) * 0.17,
       yaw: (i * 1.13) % (Math.PI * 2),
       tint: grassTint.clone(),
     });
@@ -1419,24 +1388,14 @@ export function buildRealFumaWorld(
       roughness: 0.86,
       metalness: 0.02,
     });
-    attachWindSway(grassMat, windUniform, 'grass');
-
-    const grassInst = new THREE.InstancedMesh(grassGeo, grassMat, grassSpots.length);
-    grassInst.receiveShadow = true;
-    grassInst.castShadow = false;
-
-    grassSpots.forEach((g, idx) => {
+    attachWindSway(grassMat, windUniform, 'grass', playerPosUniform, [88, 138]);
+    createSpatialChunkInstanced(worldGroup, grassSpots, grassGeo, grassMat, 1, false, true, (g, _idx, push) => {
       dummy.position.set(g.x, g.y, g.z);
       dummy.rotation.set(0, g.yaw, 0);
       dummy.scale.set(g.sx, g.sy, g.sx);
       dummy.updateMatrix();
-      grassInst.setMatrixAt(idx, dummy.matrix);
-      grassInst.setColorAt(idx, g.tint);
+      push(dummy.matrix, g.tint);
     });
-    grassInst.instanceMatrix.needsUpdate = true;
-    if (grassInst.instanceColor) grassInst.instanceColor.needsUpdate = true;
-    grassInst.computeBoundingSphere();
-    worldGroup.add(grassInst);
     disposables.push(grassGeo, grassMat);
   }
 
@@ -1456,6 +1415,7 @@ export function buildRealFumaWorld(
       });
     }
   }
+  const lampPositions: Array<{ x: number; y: number; z: number }> = [];
   let lampMat: THREE.MeshStandardMaterial | null = null;
   if (poleSpots.length > 0) {
     const poleGeo = new THREE.CylinderGeometry(0.1, 0.14, 7.6, 8);
@@ -1479,9 +1439,13 @@ export function buildRealFumaWorld(
 
       const armOffX = Math.cos(p.yaw) * (-p.side * 0.85);
       const armOffZ = -Math.sin(p.yaw) * (-p.side * 0.85);
-      dummy.position.set(p.x + armOffX, p.y + 7.5, p.z + armOffZ);
+      const lx = p.x + armOffX;
+      const ly = p.y + 7.5;
+      const lz = p.z + armOffZ;
+      dummy.position.set(lx, ly, lz);
       dummy.updateMatrix();
       lampInst.setMatrixAt(idx, dummy.matrix);
+      lampPositions.push({ x: lx, y: ly - 0.3, z: lz });
     });
     poleInst.instanceMatrix.needsUpdate = true;
     lampInst.instanceMatrix.needsUpdate = true;
@@ -1549,7 +1513,7 @@ export function buildRealFumaWorld(
       const fPostInst = new THREE.InstancedMesh(fPostGeo, fMat, fencePosts.length);
       const fRailInst = new THREE.InstancedMesh(fRailGeo, fMat, fencePosts.length * 2);
       fPostInst.castShadow = true;
-      fRailInst.castShadow = true;
+      fRailInst.castShadow = false;
       fencePosts.forEach((fp, idx) => {
         dummy.position.set(fp.x, fp.y + 0.41, fp.z);
         dummy.rotation.set(0, fp.yaw, 0);
@@ -1655,8 +1619,10 @@ export function buildRealFumaWorld(
     worldGroup,
     asphaltRoadMat,
     checkpointBeacon,
-    updateDynamicWorld: (timeSec, isWet, nightFactor = 0) => {
+    lampPositions,
+    updateDynamicWorld: (timeSec, isWet, nightFactor = 0, playerX = 0, playerZ = 0) => {
       windUniform.value = timeSec;
+      playerPosUniform.value.set(playerX, playerZ);
       const targetRough = isWet ? 0.22 : 0.68;
       const targetMetal = isWet ? 0.3 : 0.1;
       asphaltRoadMat.roughness += (targetRough - asphaltRoadMat.roughness) * 0.08;

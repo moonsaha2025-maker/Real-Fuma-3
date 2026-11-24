@@ -15,6 +15,8 @@ export interface CarModelRig {
   setLights: (headlights: boolean, braking: boolean, nitro: boolean) => void;
   setWheels: (steerRad: number, spinDeltaRad: number) => void;
   setBodyTilt: (pitchRad: number, rollRad: number, heaveY: number) => void;
+  setDirt: (dirtLevel: number, washProgress?: number, washFoam?: number) => void;
+  setDamage: (damageLevel: number) => void;
   dispose: () => void;
 }
 
@@ -356,11 +358,26 @@ function buildSculptedHullGeometry(
     indices.push(rowA, rowB + (ringPts - 1), rowB);
   }
 
-  // Close rear and front caps smoothly
-  const frontBase = (zFracs.length - 1) * ringPts;
+  // Close rear and front caps with crisp independent end-cap vertices so side normals stay silky smooth
+  const rearCapStart = verts.length / 3;
+  for (let p = 0; p < ringPts; p++) {
+    const src = p * 3;
+    verts.push(verts[src], verts[src + 1], verts[src + 2]);
+    uvs.push(p / (ringPts - 1), 0);
+  }
   for (let p = 1; p < ringPts - 1; p++) {
-    indices.push(0, p, p + 1);
-    indices.push(frontBase, frontBase + p + 1, frontBase + p);
+    indices.push(rearCapStart, rearCapStart + p, rearCapStart + p + 1);
+  }
+
+  const frontSrcBase = (zFracs.length - 1) * ringPts;
+  const frontCapStart = verts.length / 3;
+  for (let p = 0; p < ringPts; p++) {
+    const src = (frontSrcBase + p) * 3;
+    verts.push(verts[src], verts[src + 1], verts[src + 2]);
+    uvs.push(p / (ringPts - 1), 1);
+  }
+  for (let p = 1; p < ringPts - 1; p++) {
+    indices.push(frontCapStart, frontCapStart + p + 1, frontCapStart + p);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -416,9 +433,11 @@ function buildCanopyGeometry(
 
   const ringPts = 9;
   const verts: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
 
-  for (const st of stations) {
+  for (let sIdx = 0; sIdx < stations.length; sIdx++) {
+    const st = stations[sIdx];
     const yt = st.yTop;
     const pts: Array<[number, number]> = [
       [-st.w, st.yBase],
@@ -431,8 +450,9 @@ function buildCanopyGeometry(
       [st.w * 0.92, st.yBase + (yt - st.yBase) * 0.42],
       [st.w, st.yBase],
     ];
-    for (const [px, py] of pts) {
-      verts.push(px, py, st.z);
+    for (let p = 0; p < pts.length; p++) {
+      verts.push(pts[p][0], pts[p][1], st.z);
+      uvs.push(p / (ringPts - 1), sIdx / (stations.length - 1));
     }
   }
 
@@ -447,6 +467,7 @@ function buildCanopyGeometry(
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
@@ -493,9 +514,11 @@ function buildContouredRoofGeometry(
 
   const ringPts = 7;
   const verts: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
 
-  for (const st of stations) {
+  for (let sIdx = 0; sIdx < stations.length; sIdx++) {
+    const st = stations[sIdx];
     const bubbleBump = isDoubleBubble ? 0.018 : 0.0;
     const centerDip = isDoubleBubble ? 0.008 : 0.025;
     const pts: Array<[number, number]> = [
@@ -507,8 +530,9 @@ function buildContouredRoofGeometry(
       [st.w * 0.68, st.y + 0.012],
       [st.w, st.y - 0.015],
     ];
-    for (const [px, py] of pts) {
-      verts.push(px, py, st.z);
+    for (let p = 0; p < pts.length; p++) {
+      verts.push(pts[p][0], pts[p][1], st.z);
+      uvs.push(p / (ringPts - 1), sIdx / (stations.length - 1));
     }
   }
 
@@ -523,6 +547,7 @@ function buildContouredRoofGeometry(
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
@@ -725,6 +750,7 @@ export function createCarModel(
   options?: {
     contactShadowMap?: THREE.Texture;
     carbonMap?: THREE.Texture;
+    dirtMap?: THREE.Texture;
     lightweight?: boolean;
   },
 ): CarModelRig {
@@ -747,13 +773,13 @@ export function createCarModel(
   const finish = customization.paintFinish;
   const bodyMaterial = new THREE.MeshPhysicalMaterial({
     color: customization.paintColor,
-    metalness: finish === 'metallic' ? 0.72 : finish === 'matte' ? 0.16 : 0.28,
-    roughness: finish === 'matte' ? 0.56 : finish === 'metallic' ? 0.16 : 0.14,
-    clearcoat: finish === 'matte' ? 0.08 : 1.0,
+    metalness: finish === 'metallic' ? 0.36 : finish === 'matte' ? 0.10 : 0.08,
+    roughness: finish === 'matte' ? 0.54 : finish === 'metallic' ? 0.16 : 0.13,
+    clearcoat: finish === 'matte' ? 0.10 : 1.0,
     clearcoatRoughness: finish === 'matte' ? 0.45 : 0.035,
     ior: 1.54,
     reflectivity: 0.94,
-    envMapIntensity: 1.42,
+    envMapIntensity: 1.32,
   });
 
   const carbonMat = new THREE.MeshPhysicalMaterial({
@@ -773,16 +799,187 @@ export function createCarModel(
   });
 
   const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0x060c14,
-    roughness: 0.05,
-    metalness: 0.14,
+    color: 0x0b1524,
+    roughness: 0.06,
+    metalness: 0.12,
     clearcoat: 1.0,
     clearcoatRoughness: 0.03,
     reflectivity: 0.96,
-    envMapIntensity: 1.55,
+    envMapIntensity: 1.4,
     transparent: true,
-    opacity: Math.min(0.92, Math.max(0.66, 0.58 + customization.windowTint * 0.36)),
+    opacity: Math.min(0.90, Math.max(0.64, 0.56 + customization.windowTint * 0.34)),
   });
+
+  // Dynamic PBR Mud/Dirt Accumulation, Crash Scuff Damage & High-Pressure Soap Wash Shader
+  const dirtUniforms = {
+    uDirtMap: { value: options?.dirtMap ?? null },
+    uDirtLevel: { value: 0.0 },
+    uDamageLevel: { value: 0.0 },
+    uWashProgress: { value: -1.0 },
+    uWashFoam: { value: 0.0 },
+    uCarBounds: { value: new THREE.Vector3(W * 0.5 * widthScale, clearance, H) },
+    uCarLength: { value: L },
+  };
+
+  if (!lightweight && options?.dirtMap) {
+    const attachDirtShader = (
+      mat: THREE.MeshPhysicalMaterial,
+      tag: string,
+      isGlass: boolean,
+    ) => {
+      mat.customProgramCacheKey = () => `car_dirt_${tag}_v3`;
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uDirtMap = dirtUniforms.uDirtMap;
+        shader.uniforms.uDirtLevel = dirtUniforms.uDirtLevel;
+        shader.uniforms.uDamageLevel = dirtUniforms.uDamageLevel;
+        shader.uniforms.uWashProgress = dirtUniforms.uWashProgress;
+        shader.uniforms.uWashFoam = dirtUniforms.uWashFoam;
+        shader.uniforms.uCarBounds = dirtUniforms.uCarBounds;
+        shader.uniforms.uCarLength = dirtUniforms.uCarLength;
+
+        shader.vertexShader = shader.vertexShader
+          .replace(
+            '#include <common>',
+            `#include <common>
+            varying vec3 vCarLocalPos;
+            varying vec3 vCarLocalNormal;`,
+          )
+          .replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+            vCarLocalPos = position;
+            vCarLocalNormal = normal;`,
+          );
+
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            `#include <common>
+            uniform sampler2D uDirtMap;
+            uniform float uDirtLevel;
+            uniform float uDamageLevel;
+            uniform float uWashProgress;
+            uniform float uWashFoam;
+            uniform vec3 uCarBounds;
+            uniform float uCarLength;
+            varying vec3 vCarLocalPos;
+            varying vec3 vCarLocalNormal;`,
+          )
+          .replace(
+            '#include <map_fragment>',
+            `#include <map_fragment>
+            float carMudMask = 0.0;
+            float carFoamMask = 0.0;
+            float carWetMask = 0.0;
+            float carDmgMask = 0.0;
+            float isGlassMat = ${isGlass ? '1.0' : '0.0'};
+
+            if (uDirtLevel > 0.004 || uWashFoam > 0.004 || uDamageLevel > 0.004) {
+              float hNorm = clamp((vCarLocalPos.y - uCarBounds.y) / max(0.15, uCarBounds.z), 0.0, 1.0);
+              vec2 uvSide = vec2(vCarLocalPos.z * 0.65, (vCarLocalPos.y - uCarBounds.y) * 1.15);
+              vec2 uvTop = vec2(vCarLocalPos.x * 0.72, vCarLocalPos.z * 0.65);
+              vec3 nAbs = abs(normalize(vCarLocalNormal));
+              vec3 dSide = texture2D(uDirtMap, uvSide).rgb;
+              vec3 dTop = texture2D(uDirtMap, uvTop).rgb;
+              vec3 dirtTex = mix(dTop, dSide, smoothstep(0.22, 0.72, nAbs.x + nAbs.z * 0.72));
+
+              // Confine mud kickup realistically to lower rocker panels & behind wheel wells
+              float sideEdge = smoothstep(uCarBounds.x * 0.45, uCarBounds.x * 0.96, abs(vCarLocalPos.x));
+              float frontPlume = smoothstep(0.55, 0.0, abs(vCarLocalPos.z - uCarLength * 0.14));
+              float rearPlume = smoothstep(0.62, 0.0, abs(vCarLocalPos.z + uCarLength * 0.40));
+              float rockerBand = 1.0 - smoothstep(0.04, 0.36, hNorm);
+              float wheelSprayZone = clamp(rockerBand + (frontPlume * 0.55 + rearPlume * 0.65) * sideEdge * (1.0 - smoothstep(0.25, 0.55, hNorm)), 0.0, 1.0);
+
+              float splatterPattern = dirtTex.r * 0.60 + dirtTex.g * 0.40;
+              float mudSupply = uDirtLevel * wheelSprayZone;
+              float rawMud = smoothstep(0.32, 0.92, splatterPattern * (0.45 + mudSupply * 0.95)) * mudSupply * 0.62;
+              float dustVeil = uDirtLevel * (0.04 + dirtTex.b * 0.08) * (1.0 - hNorm * 0.55);
+
+              if (isGlassMat > 0.5) {
+                float edgeGlass = smoothstep(0.35, 0.85, abs(vCarLocalPos.x) / max(0.2, uCarBounds.x));
+                rawMud *= edgeGlass * 0.18;
+                dustVeil *= 0.28;
+              }
+
+              float effectiveDirt = clamp(max(rawMud, dustVeil), 0.0, isGlassMat > 0.5 ? 0.16 : 0.64);
+
+              // Car wash sweep curtain: descends top-to-bottom & sweeps front-to-rear
+              if (uWashProgress >= 0.0) {
+                float washCoord = (1.0 - hNorm) * 0.62 + (0.5 - vCarLocalPos.z / max(1.0, uCarLength)) * 0.38;
+                float edgeNoise = (dirtTex.r - 0.5) * 0.12 + (dirtTex.b - 0.5) * 0.06;
+                float waveFront = uWashProgress * 1.24 - 0.12;
+                float washedMask = smoothstep(waveFront + 0.07, waveFront - 0.07, washCoord + edgeNoise);
+
+                effectiveDirt *= (1.0 - washedMask);
+
+                float foamBand = exp(-pow((washCoord + edgeNoise - waveFront) / 0.11, 2.0));
+                carFoamMask = clamp(foamBand * uWashFoam * (0.55 + dirtTex.r * 0.65), 0.0, 0.94);
+                carWetMask = clamp(washedMask * uWashFoam * 1.25, 0.0, 1.0);
+              }
+
+              carMudMask = effectiveDirt;
+
+              // Crash damage scuffs, scraped primer/bare metal around bumper corners & rocker flanks
+              if (uDamageLevel > 0.01) {
+                float bumperZone = smoothstep(uCarLength * 0.30, uCarLength * 0.49, abs(vCarLocalPos.z));
+                float flankZone = smoothstep(uCarBounds.x * 0.66, uCarBounds.x * 0.96, abs(vCarLocalPos.x));
+                float streakNoise = texture2D(uDirtMap, vec2(vCarLocalPos.z * 2.2, vCarLocalPos.y * 5.8)).r;
+                float scratchFactor = (0.15 + bumperZone * 0.72 + flankZone * 0.65) * (1.0 - smoothstep(0.15, 0.62, hNorm));
+                float rawScuff = smoothstep(0.76 - uDamageLevel * 0.48 * scratchFactor, 0.98, streakNoise + uDamageLevel * 0.25) * scratchFactor;
+                if (isGlassMat > 0.5) {
+                  float crackEdge = smoothstep(0.45, 0.92, abs(vCarLocalPos.x) / max(0.2, uCarBounds.x));
+                  rawScuff *= crackEdge * 0.48;
+                }
+                carDmgMask = clamp(rawScuff * uDamageLevel * 0.72, 0.0, 0.58);
+              }
+
+              vec3 dryDustCol = vec3(0.32, 0.28, 0.23);
+              vec3 wetMudCol = vec3(0.18, 0.12, 0.07);
+              float mudClodMix = clamp(rawMud * 1.45, 0.0, 1.0);
+              vec3 grimeColor = mix(dryDustCol, wetMudCol, mudClodMix);
+              vec3 scrapeColor = isGlassMat > 0.5 ? vec3(0.76, 0.82, 0.88) : mix(vec3(0.14, 0.16, 0.19), vec3(0.48, 0.52, 0.56), dSide.g);
+
+              diffuseColor.rgb *= (1.0 - carWetMask * 0.10);
+              diffuseColor.rgb = mix(diffuseColor.rgb, scrapeColor, carDmgMask);
+              diffuseColor.rgb = mix(diffuseColor.rgb, grimeColor, carMudMask);
+              diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.93, 0.97, 1.0), carFoamMask * 0.86);
+
+              if (isGlassMat > 0.5) {
+                diffuseColor.a = clamp(diffuseColor.a + carMudMask * 0.15 + carFoamMask * 0.32 + carDmgMask * 0.15, 0.0, 0.96);
+              }
+            }`,
+          )
+          .replace(
+            '#include <roughnessmap_fragment>',
+            `#include <roughnessmap_fragment>
+            roughnessFactor = mix(roughnessFactor, 0.68, carDmgMask);
+            roughnessFactor = mix(roughnessFactor, 0.94, carMudMask);
+            roughnessFactor = mix(roughnessFactor, 0.06, carWetMask * (1.0 - carMudMask) * 0.78);
+            roughnessFactor = mix(roughnessFactor, 0.28, carFoamMask);`,
+          )
+          .replace(
+            '#include <metalnessmap_fragment>',
+            `#include <metalnessmap_fragment>
+            metalnessFactor = mix(metalnessFactor, 0.75, carDmgMask * (1.0 - carMudMask));
+            metalnessFactor = mix(metalnessFactor, 0.0, clamp(carMudMask + carFoamMask, 0.0, 1.0));`,
+          )
+          .replace(
+            '#include <lights_physical_fragment>',
+            `#include <lights_physical_fragment>
+            #ifdef USE_CLEARCOAT
+              material.clearcoat = mix(material.clearcoat, 0.0, clamp(carMudMask * 1.15 + carDmgMask * 1.1 + carFoamMask, 0.0, 1.0));
+              material.clearcoat = mix(material.clearcoat, 1.0, carWetMask * (1.0 - carMudMask) * 0.9);
+              material.clearcoatRoughness = mix(material.clearcoatRoughness, 0.85, max(carMudMask, carDmgMask));
+              material.clearcoatRoughness = mix(material.clearcoatRoughness, 0.03, carWetMask * (1.0 - carMudMask));
+            #endif`,
+          );
+      };
+    };
+
+    attachDirtShader(bodyMaterial, 'body', false);
+    attachDirtShader(carbonMat, 'carbon', false);
+    attachDirtShader(glassMat, 'glass', true);
+  }
 
   // 1. High-Resolution Sculpted Lofted Coachwork Hull with Carved Wheel Arches
   const hullMesh = new THREE.Mesh(
@@ -828,31 +1025,31 @@ export function createCarModel(
     addPart(darkTrimParts, swGeo, -W * 0.17, clearance + H * 0.62, L * 0.055, -0.35);
   }
 
-  // Sculpted A-pillars & Flying Buttress C-pillars
+  // Flush A-pillars tucked inside windshield side edges & Flying Buttress C-pillars
   for (const side of [-1, 1]) {
-    const aPillar = new THREE.CylinderGeometry(0.020, 0.026, L * 0.22, 8);
+    const aPillar = new THREE.CylinderGeometry(0.016, 0.022, L * 0.16, 8);
     aPillar.rotateX(Math.PI / 2);
     addPart(
       darkTrimParts,
       aPillar,
-      side * W * 0.295 * widthScale,
-      clearance + H * 0.77,
-      L * 0.16,
-      0.56,
-      side * -0.18,
+      side * W * 0.268 * widthScale,
+      clearance + H * 0.75,
+      L * 0.185,
+      0.72,
+      side * -0.14,
     );
 
     if (arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko') {
-      // Flying buttress aero bridges flanking rear engine deck
-      const buttress = new THREE.BoxGeometry(0.075, 0.06, L * 0.25);
+      // Flying buttress aero bridges flanking rear engine deck flush to roof
+      const buttress = new THREE.BoxGeometry(0.068, 0.055, L * 0.22);
       addPart(
         bodyTrimParts,
         buttress,
-        side * W * 0.285 * widthScale,
-        clearance + H * 0.77,
-        -L * 0.20,
-        -0.46,
-        side * 0.16,
+        side * W * 0.258 * widthScale,
+        clearance + H * 0.74,
+        -L * 0.19,
+        -0.36,
+        side * 0.12,
       );
     }
   }
@@ -1388,6 +1585,14 @@ export function createCarModel(
       chassisGroup.rotation.x = pitchRad;
       chassisGroup.rotation.z = rollRad;
       chassisGroup.position.y = heaveY;
+    },
+    setDirt: (dirtLevel, washProgress = -1, washFoam = 0) => {
+      dirtUniforms.uDirtLevel.value = THREE.MathUtils.clamp(dirtLevel, 0, 1);
+      dirtUniforms.uWashProgress.value = washProgress;
+      dirtUniforms.uWashFoam.value = washFoam;
+    },
+    setDamage: (damageLevel) => {
+      dirtUniforms.uDamageLevel.value = THREE.MathUtils.clamp(damageLevel, 0, 1);
     },
     dispose: () => {
       root.traverse((obj) => {

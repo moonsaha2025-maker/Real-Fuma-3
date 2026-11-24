@@ -10,16 +10,20 @@ import { GarageDealership } from './components/GarageDealership';
 import { LoadingScreen } from './components/LoadingScreen';
 import { MainMenu } from './components/MainMenu';
 import { PauseModal, RaceResultsModal } from './components/PauseAndResultsModal';
+import { PhotoModeOverlay } from './components/PhotoModeOverlay';
 import { ProfileModal } from './components/ProfileModal';
 import { QuickRaceModal } from './components/QuickRaceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { WorldMapModal } from './components/WorldMapModal';
+import { getCarSpec } from './data/cars';
 import { getRoadPointAt } from './data/track';
 import { REGIONS } from './data/world';
 import { audioEngine } from './engine/audio';
 import { DRIVE_SPAWN_S, GameEngine } from './engine/GameEngine';
 import { useGameStore } from './state/useGameStore';
 import {
+  ControlInputState,
+  ControlScheme,
   LiveTelemetry,
   MapLandmark,
   OwnedCarData,
@@ -70,6 +74,9 @@ const INITIAL_TELEMETRY: LiveTelemetry = {
   cycleTimeLabel: '09:14',
   autoDayNightCycle: true,
   fps: 60,
+  dirtLevel: 0,
+  damageLevel: 0,
+  crashFlash: 0,
   opponents: [],
 };
 
@@ -83,6 +90,7 @@ export default function App() {
     buyCar,
     updateCarCustomization,
     buyUpgrade,
+    setCarDirtLevel,
     unlockRegion,
     recordRaceResult,
     addFreeRoamRewards,
@@ -91,9 +99,11 @@ export default function App() {
 
   const [screen, setScreen] = useState<ScreenState>('loading');
   const [paused, setPaused] = useState(false);
+  const [photoMode, setPhotoMode] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
   const [telemetry, setTelemetry] = useState<LiveTelemetry>(INITIAL_TELEMETRY);
   const [raceResult, setRaceResult] = useState<RaceResultSummary | null>(null);
+  const [isWashingCar, setIsWashingCar] = useState(false);
   const [activeRaceConfig, setActiveRaceConfig] = useState<{
     event: RaceEvent;
     weather?: WeatherType;
@@ -113,11 +123,13 @@ export default function App() {
     recordRaceResult,
     addFreeRoamRewards,
     unlockRegion,
+    setCarDirtLevel,
   });
   callbacksRef.current = {
     recordRaceResult,
     addFreeRoamRewards,
     unlockRegion,
+    setCarDirtLevel,
   };
 
   const notify = useCallback((msg: string) => {
@@ -148,6 +160,12 @@ export default function App() {
       onRegionUnlock: (regId) => {
         callbacksRef.current.unlockRegion(regId);
       },
+      onDirtChange: (carId, dirtLevel) => {
+        callbacksRef.current.setCarDirtLevel(carId, dirtLevel);
+      },
+      onWashComplete: () => {
+        setIsWashingCar(false);
+      },
     });
     engineRef.current = engine;
 
@@ -160,17 +178,73 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    audioEngine.applySettings(save.settings);
     engineRef.current?.applySettings(save.settings);
   }, [save.settings]);
 
+  useEffect(() => {
+    const unlockAudio = () => {
+      audioEngine.init();
+      audioEngine.applySettings(save.settings);
+    };
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTouchInput = useCallback((patch: Partial<ControlInputState>) => {
+    engineRef.current?.setTouchInput(patch);
+  }, []);
+
+  const handleCycleControlScheme = useCallback(() => {
+    audioEngine.playUiClick();
+    const order: ControlScheme[] = ['buttons', 'wheel', 'tilt', 'keyboard'];
+    const labels: Record<ControlScheme, string> = {
+      buttons: 'Controls: Touch Pad + WASD',
+      wheel: 'Controls: Steering Wheel',
+      tilt: 'Controls: Tilt / Gyro',
+      keyboard: 'Controls: Keyboard / Gamepad',
+    };
+    const next = order[(order.indexOf(save.settings.controlScheme) + 1) % order.length];
+    updateSettings({ controlScheme: next });
+    notify(labels[next]);
+  }, [save.settings.controlScheme, updateSettings, notify]);
+
   const handlePreviewCar = useCallback((carData: OwnedCarData) => {
+    setIsWashingCar(false);
     engineRef.current?.setPlayerCar(carData);
+  }, []);
+
+  const handleWashCar = useCallback(() => {
+    if (engineRef.current?.startCarWash()) {
+      setIsWashingCar(true);
+    }
+  }, []);
+
+  const enterPhotoMode = useCallback(() => {
+    setPaused(false);
+    setShowWorldMap(false);
+    engineRef.current?.setPaused(false);
+    engineRef.current?.setPhotoMode(true);
+    setPhotoMode(true);
+  }, []);
+
+  const exitPhotoMode = useCallback(() => {
+    engineRef.current?.setPhotoMode(false);
+    setPhotoMode(false);
   }, []);
 
   const enterMainMenu = useCallback(() => {
     setPaused(false);
+    setPhotoMode(false);
     setRaceResult(null);
     setActiveRaceConfig(null);
+    setIsWashingCar(false);
+    engineRef.current?.setPhotoMode(false);
     engineRef.current?.setPlayerCar(activeCarData);
     engineRef.current?.setShowcaseMode(true);
     setScreen('main_menu');
@@ -179,8 +253,10 @@ export default function App() {
   const startFreeRoam = useCallback(
     (spawnX?: number, spawnZ?: number, weather?: WeatherType, time?: TimeOfDay) => {
       setPaused(false);
+      setPhotoMode(false);
       setRaceResult(null);
       setActiveRaceConfig(null);
+      engineRef.current?.setPhotoMode(false);
       engineRef.current?.setPlayerCar(activeCarData);
       if (weather && time) {
         engineRef.current?.setAtmosphere(weather, time);
@@ -194,9 +270,11 @@ export default function App() {
   const startRaceEvent = useCallback(
     (event: RaceEvent, weather?: WeatherType, time?: TimeOfDay) => {
       setPaused(false);
+      setPhotoMode(false);
       setRaceResult(null);
       setShowWorldMap(false);
       setActiveRaceConfig({ event, weather, time });
+      engineRef.current?.setPhotoMode(false);
       engineRef.current?.setPlayerCar(activeCarData);
       engineRef.current?.startRaceEvent(event, weather, time);
       setScreen('playing');
@@ -211,6 +289,9 @@ export default function App() {
           setShowWorldMap(false);
           return;
         }
+        if (photoMode) {
+          return;
+        }
         if (screen === 'playing' && !raceResult) {
           setPaused((prev) => {
             const next = !prev;
@@ -218,7 +299,15 @@ export default function App() {
             return next;
           });
         }
-      } else if (e.code === 'KeyM' && screen === 'playing' && !raceResult) {
+      } else if (
+        e.code === 'KeyP' &&
+        screen === 'playing' &&
+        !raceResult &&
+        !showWorldMap &&
+        !photoMode
+      ) {
+        enterPhotoMode();
+      } else if (e.code === 'KeyM' && screen === 'playing' && !raceResult && !photoMode) {
         setShowWorldMap((prev) => !prev);
       } else if (e.code === 'Enter' && screen === 'main_menu' && !showWorldMap) {
         startFreeRoam();
@@ -226,13 +315,16 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [screen, showWorldMap, raceResult, startFreeRoam]);
+  }, [screen, showWorldMap, raceResult, photoMode, startFreeRoam, enterPhotoMode]);
 
   const isShowcaseScreen =
     screen === 'main_menu' ||
     screen === 'garage' ||
     screen === 'dealership' ||
     screen === 'customization';
+
+  const isPhotoActive = screen === 'playing' && photoMode && !raceResult;
+  const isOrbitEnabled = isShowcaseScreen || isPhotoActive;
 
   const handleInteractLandmark = (lm: MapLandmark) => {
     audioEngine.playUiClick();
@@ -254,25 +346,48 @@ export default function App() {
     <div className="relative w-full h-full overflow-hidden bg-[#07080b]">
       <div
         ref={canvasContainerRef}
-        className="fixed inset-0 z-0"
+        className={`fixed inset-0 z-0 ${isOrbitEnabled ? 'touch-none cursor-grab active:cursor-grabbing' : ''}`}
         onPointerDown={(e) => {
-          if (!isShowcaseScreen) return;
+          if (
+            screen === 'playing' &&
+            !paused &&
+            !photoMode &&
+            !raceResult &&
+            e.pointerType === 'touch' &&
+            save.settings.controlScheme === 'keyboard'
+          ) {
+            updateSettings({ controlScheme: 'buttons' });
+            notify('Touch Controls Enabled');
+            return;
+          }
+          if (!isOrbitEnabled) return;
           dragPointer.current = { down: true, x: e.clientX, y: e.clientY };
         }}
         onPointerMove={(e) => {
-          if (!isShowcaseScreen || !dragPointer.current.down) return;
+          if (!isOrbitEnabled || !dragPointer.current.down) return;
           const dx = e.clientX - dragPointer.current.x;
           const dy = e.clientY - dragPointer.current.y;
           dragPointer.current.x = e.clientX;
           dragPointer.current.y = e.clientY;
-          engineRef.current?.adjustShowcaseOrbit(dx, dy, 0);
+          if (isPhotoActive) {
+            engineRef.current?.adjustPhotoOrbit(dx, dy, 0);
+          } else {
+            engineRef.current?.adjustShowcaseOrbit(dx, dy, 0);
+          }
         }}
         onPointerUp={() => {
           dragPointer.current.down = false;
         }}
+        onPointerLeave={() => {
+          dragPointer.current.down = false;
+        }}
         onWheel={(e) => {
-          if (!isShowcaseScreen) return;
-          engineRef.current?.adjustShowcaseOrbit(0, 0, e.deltaY * 0.004);
+          if (!isOrbitEnabled) return;
+          if (isPhotoActive) {
+            engineRef.current?.adjustPhotoOrbit(0, 0, e.deltaY * 0.004);
+          } else {
+            engineRef.current?.adjustShowcaseOrbit(0, 0, e.deltaY * 0.004);
+          }
         }}
       />
 
@@ -284,6 +399,7 @@ export default function App() {
 
       {screen === 'loading' && (
         <LoadingScreen
+          radioStation={save.settings.radioStation}
           onReady={() => {
             engineRef.current?.setShowcaseMode(true);
             setScreen('main_menu');
@@ -317,6 +433,9 @@ export default function App() {
           initialTab={screen}
           save={save}
           activeCar={activeCarData}
+          liveDirtLevel={telemetry.dirtLevel}
+          isWashing={isWashingCar}
+          onWashCar={handleWashCar}
           onBack={enterMainMenu}
           onPreviewCar={handlePreviewCar}
           onSelectCar={selectCar}
@@ -370,13 +489,15 @@ export default function App() {
         />
       )}
 
-      {screen === 'playing' && !paused && !raceResult && (
+      {screen === 'playing' && !paused && !photoMode && !raceResult && (
         <GameHUD
           telemetry={telemetry}
           settings={save.settings}
-          onTouchInput={(patch) => engineRef.current?.setTouchInput(patch)}
+          onTouchInput={handleTouchInput}
           onShiftGear={(delta) => engineRef.current?.shiftGear(delta)}
           onCycleCamera={() => engineRef.current?.cycleCamera()}
+          onCycleControlScheme={handleCycleControlScheme}
+          onEnterPhotoMode={enterPhotoMode}
           onOpenMap={() => setShowWorldMap(true)}
           onPause={() => {
             setPaused(true);
@@ -387,17 +508,44 @@ export default function App() {
         />
       )}
 
-      {screen === 'playing' && paused && !raceResult && (
+      {isPhotoActive && (
+        <PhotoModeOverlay
+          carName={getCarSpec(activeCarData.carId).name}
+          regionName={telemetry.regionName}
+          weather={telemetry.weather}
+          timeOfDay={telemetry.timeOfDay}
+          cycleTimeLabel={telemetry.cycleTimeLabel}
+          onExit={exitPhotoMode}
+          onCapture={() => engineRef.current?.capturePhotoDataUrl() ?? null}
+          onResetCamera={() => engineRef.current?.resetPhotoCamera()}
+          onUpdateCamera={(patch) => engineRef.current?.setPhotoCameraParams(patch)}
+          onCycleWeather={(w, t) => {
+            engineRef.current?.setAtmosphere(w, t);
+            setTelemetry((prev) => ({ ...prev, weather: w, timeOfDay: t }));
+          }}
+        />
+      )}
+
+      {screen === 'playing' && paused && !photoMode && !raceResult && (
         <PauseModal
           weather={telemetry.weather}
           timeOfDay={telemetry.timeOfDay}
           cycleTimeLabel={telemetry.cycleTimeLabel}
           autoDayNightCycle={telemetry.autoDayNightCycle}
           headlightsOn={telemetry.headlightsOn}
+          radioStation={save.settings.radioStation}
+          radioVolume={save.settings.radioVolume}
+          onChangeRadioStation={(radioStation) =>
+            updateSettings({ radioStation })
+          }
+          onChangeRadioVolume={(radioVolume) =>
+            updateSettings({ radioVolume })
+          }
           onResume={() => {
             setPaused(false);
             engineRef.current?.setPaused(false);
           }}
+          onOpenPhotoMode={enterPhotoMode}
           onRestart={() => {
             if (activeRaceConfig) {
               startRaceEvent(

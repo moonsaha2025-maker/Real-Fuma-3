@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Droplets,
   Lock,
   Palette,
   RotateCcw,
@@ -37,6 +38,9 @@ interface GarageDealershipProps {
   initialTab: 'garage' | 'dealership' | 'customization';
   save: PlayerSaveData;
   activeCar: OwnedCarData;
+  liveDirtLevel: number;
+  isWashing: boolean;
+  onWashCar: () => void;
   onBack: () => void;
   onPreviewCar: (carData: OwnedCarData) => void;
   onSelectCar: (carId: string) => void;
@@ -79,6 +83,9 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
   initialTab,
   save,
   activeCar,
+  liveDirtLevel,
+  isWashing,
+  onWashCar,
   onBack,
   onPreviewCar,
   onSelectCar,
@@ -111,7 +118,11 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
     customization: getDefaultCustomization(inspectedSpec),
     upgrades: getDefaultUpgrades(),
     mileageKm: 0,
+    dirtLevel: 0,
   };
+  const displayDirtPct = Math.round(
+    (isWashing ? liveDirtLevel : (inspectedData.dirtLevel ?? 0)) * 100,
+  );
   const stats = getEffectiveCarStats(inspectedSpec, inspectedData.upgrades);
 
   const filteredCars = CAR_CATALOG.filter((c) => {
@@ -252,6 +263,15 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
             <span className="text-slate-200">{stats.horsepower} HP</span>
             <span className="text-rose-400">{stats.topSpeedKmh} KM/H</span>
             <span className="text-slate-400">HND {stats.handlingRating}</span>
+            {inspectedOwned && (
+              <span
+                className={
+                  displayDirtPct > 15 ? 'text-amber-400' : 'text-sky-300'
+                }
+              >
+                DIRT {displayDirtPct}%
+              </span>
+            )}
           </div>
           <div className="font-mono-num text-xs sm:text-sm font-bold text-emerald-400 tabular-nums">
             ${save.money.toLocaleString()}
@@ -319,10 +339,29 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
                   <div className="flex items-center gap-2">
                     {inspectedOwned ? (
                       <>
+                        <button
+                          disabled={isWashing}
+                          onClick={() => {
+                            onWashCar();
+                            showToast(
+                              displayDirtPct > 0
+                                ? 'Washing off mud & road grime...'
+                                : 'Applying showroom foam rinse...',
+                            );
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 border cursor-pointer disabled:opacity-60 ${
+                            displayDirtPct > 5
+                              ? 'bg-sky-600 hover:bg-sky-500 border-sky-400 text-white'
+                              : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-sky-300'
+                          }`}
+                        >
+                          <Droplets className="w-3.5 h-3.5" />
+                          {isWashing ? 'WASHING...' : 'WASH CAR'}
+                        </button>
                         {save.activeCarId !== previewId && (
                           <button
                             onClick={() => handleSelectOrBuy(previewId)}
-                            className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white px-3.5 py-1.5 text-xs font-display font-bold tracking-wider cursor-pointer"
+                            className="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white px-3.5 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 cursor-pointer"
                           >
                             SET ACTIVE
                           </button>
@@ -332,7 +371,7 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
                             onSelectCar(previewId);
                             onDriveNow();
                           }}
-                          className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider cursor-pointer"
+                          className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 cursor-pointer"
                         >
                           DRIVE NOW
                         </button>
@@ -340,7 +379,7 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
                     ) : (
                       <button
                         onClick={() => handleSelectOrBuy(previewId)}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider cursor-pointer"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 cursor-pointer"
                       >
                         BUY FOR ${inspectedSpec.price.toLocaleString()}
                       </button>
@@ -427,15 +466,36 @@ export const GarageDealership: React.FC<GarageDealershipProps> = ({
                       </button>
                     ))}
                   </div>
-                  <button
-                    onClick={() => {
-                      onSelectCar(inspectedOwned.carId);
-                      onDriveNow();
-                    }}
-                    className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider cursor-pointer"
-                  >
-                    TEST DRIVE
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={isWashing}
+                      onClick={() => {
+                        onWashCar();
+                        showToast(
+                          displayDirtPct > 0
+                            ? 'Washing off mud & road grime...'
+                            : 'Applying showroom foam rinse...',
+                        );
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 border cursor-pointer disabled:opacity-60 ${
+                        displayDirtPct > 5
+                          ? 'bg-sky-600 hover:bg-sky-500 border-sky-400 text-white'
+                          : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-sky-300'
+                      }`}
+                    >
+                      <Droplets className="w-3.5 h-3.5" />
+                      {isWashing ? 'WASHING...' : 'WASH CAR'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        onSelectCar(inspectedOwned.carId);
+                        onDriveNow();
+                      }}
+                      className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-1.5 text-xs font-display font-bold tracking-wider whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      TEST DRIVE
+                    </button>
+                  </div>
                 </div>
 
                 {customSubTab === 'paint' && (

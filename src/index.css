@@ -25,6 +25,7 @@
     font-family: var(--font-sans);
     user-select: none;
     -webkit-user-select: none;
+    -webkit-touch-callout: none;
   }
 }
 

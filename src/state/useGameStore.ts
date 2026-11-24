@@ -37,6 +37,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   masterVolume: 0.75,
   engineVolume: 0.85,
   sfxVolume: 0.8,
+  radioVolume: 0.55,
+  radioStation: 'horizon_fm',
   muted: false,
   cameraShake: true,
   units: 'KMH',
@@ -57,6 +59,7 @@ function createInitialSaveData(): PlayerSaveData {
         customization: getDefaultCustomization(starter),
         upgrades: getDefaultUpgrades(),
         mileageKm: 0,
+        dirtLevel: 0,
       },
     },
     completedEvents: [],
@@ -190,6 +193,7 @@ export function useGameStore() {
         customization: getDefaultCustomization(spec),
         upgrades: getDefaultUpgrades(),
         mileageKm: 0,
+        dirtLevel: 0,
       };
       const ownedCount = Object.keys(prev.ownedCars).length + 1;
       const newAchievements = [...prev.achievements];
@@ -257,6 +261,27 @@ export function useGameStore() {
     },
     [],
   );
+
+  const setCarDirtLevel = useCallback((carId: string, dirtLevel: number) => {
+    const clamped = Math.max(0, Math.min(1, dirtLevel));
+    setSave((prev) => {
+      const car = prev.ownedCars[carId];
+      if (!car) return prev;
+      if (Math.abs((car.dirtLevel ?? 0) - clamped) < 0.005 && clamped !== 0) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ownedCars: {
+          ...prev.ownedCars,
+          [carId]: {
+            ...car,
+            dirtLevel: clamped,
+          },
+        },
+      };
+    });
+  }, []);
 
   const unlockRegion = useCallback((regionId: RegionId) => {
     setSave((prev) => {
@@ -404,6 +429,7 @@ export function useGameStore() {
     buyCar,
     updateCarCustomization,
     buyUpgrade,
+    setCarDirtLevel,
     unlockRegion,
     recordRaceResult,
     addFreeRoamRewards,

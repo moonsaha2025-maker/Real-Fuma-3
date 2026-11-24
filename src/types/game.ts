@@ -22,6 +22,13 @@ export type WeatherType =
 
 export type TimeOfDay = 'sunrise' | 'day' | 'sunset' | 'night';
 
+export type RadioStationId =
+  | 'off'
+  | 'horizon_fm'
+  | 'apex_bass'
+  | 'lofi_sunset'
+  | 'hyper_euro';
+
 export type RegionId =
   | 'sunset_coast'
   | 'palm_canyon'
@@ -108,6 +115,7 @@ export interface OwnedCarData {
   customization: CarCustomization;
   upgrades: CarUpgrades;
   mileageKm: number;
+  dirtLevel?: number;
 }
 
 export interface RegionInfo {
@@ -162,6 +170,8 @@ export interface GameSettings {
   masterVolume: number;
   engineVolume: number;
   sfxVolume: number;
+  radioVolume: number;
+  radioStation: RadioStationId;
   muted: boolean;
   cameraShake: boolean;
   units: 'KMH' | 'MPH';
@@ -262,6 +272,9 @@ export interface LiveTelemetry {
   cycleTimeLabel: string;
   autoDayNightCycle: boolean;
   fps: number;
+  dirtLevel: number;
+  damageLevel: number;
+  crashFlash: number;
   opponents: Array<{ x: number; z: number; name: string }>;
 }
 
