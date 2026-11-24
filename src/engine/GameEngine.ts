@@ -98,6 +98,7 @@ const _focusPt = new THREE.Vector3();
 
 const SHADOW_HALF_EXTENT = 32;
 const DEFAULT_SHADOW_MAP_RES = 1536;
+const DRIFT_SMOKE_ANGLE_THRESHOLD_DEG = 10;
 
 function timePresetToPhase(time: TimeOfDay): number {
   if (time === 'sunrise') return 0.265;
@@ -227,6 +228,7 @@ export class GameEngine {
   private tireSmoke: TireSmokeSystem;
   private skidmarks: TireSkidmarkSystem;
   private crashEffects: CrashEffectsSystem;
+  private wasDriftSmokeActive = false;
 
   // Vehicle Dirt & Garage Wash Animation State
   private carDirtLevel = 0;
@@ -256,6 +258,8 @@ export class GameEngine {
   private orbitPitch = 0.14;
   private orbitDist = 4.15;
   private autoOrbit = true;
+  private showcaseRightOffset = true;
+  private showcasePanAmount = 1.05;
   private photoYaw = 0.55;
   private photoPitch = 0.14;
   private photoDist = 4.1;
@@ -815,6 +819,7 @@ export class GameEngine {
       this.raceState = 'free_roam';
       this.trafficAI.clearRacers();
       this.tireSmoke.clear();
+      this.wasDriftSmokeActive = false;
       this.skidmarks.clear();
       this.crashEffects.clear();
       this.crashFlash = 0;
@@ -902,6 +907,10 @@ export class GameEngine {
     this.orbitDist = 4.15;
   }
 
+  public setShowcaseRightOffset(enabled: boolean): void {
+    this.showcaseRightOffset = enabled;
+  }
+
   private snapDrivingCamera(): void {
     const sinH = Math.sin(this.physics.heading);
     const cosH = Math.cos(this.physics.heading);
@@ -949,6 +958,7 @@ export class GameEngine {
 
   public fastTravelTo(x: number, z: number): void {
     this.tireSmoke.clear();
+    this.wasDriftSmokeActive = false;
     this.skidmarks.clear();
     this.crashEffects.clear();
     this.crashFlash = 0;
@@ -1005,6 +1015,7 @@ export class GameEngine {
     const st = TRACK_STATIONS[this.physics.stationIdx] ?? TRACK_STATIONS[0];
     this.physics = createInitialPhysicsStateAtS(st.s, 0);
     this.tireSmoke.clear();
+    this.wasDriftSmokeActive = false;
     this.skidmarks.clear();
     this.crashEffects.clear();
     this.crashFlash = 0;
@@ -1619,16 +1630,31 @@ export class GameEngine {
       if (this.autoOrbit) {
         this.orbitYaw += dt * (this.washActive ? 0.58 : 0.22);
       }
+      const targetPan = this.showcaseRightOffset && !this.washActive ? 1.05 : 0;
+      this.showcasePanAmount = THREE.MathUtils.damp(
+        this.showcasePanAmount,
+        targetPan,
+        6,
+        dt,
+      );
+      const leftX = -Math.cos(this.orbitYaw) * this.showcasePanAmount;
+      const leftZ = Math.sin(this.orbitYaw) * this.showcasePanAmount;
       const cx =
         this.physics.x +
+        leftX +
         Math.sin(this.orbitYaw) * Math.cos(this.orbitPitch) * this.orbitDist;
       const cy =
         this.physics.y + 0.72 + Math.sin(this.orbitPitch) * this.orbitDist;
       const cz =
         this.physics.z +
+        leftZ +
         Math.cos(this.orbitYaw) * Math.cos(this.orbitPitch) * this.orbitDist;
       this.camera.position.lerp(_camTarget.set(cx, cy, cz), Math.min(1, dt * 8));
-      this.camera.lookAt(this.physics.x, this.physics.y + 0.64, this.physics.z);
+      this.camera.lookAt(
+        this.physics.x + leftX,
+        this.physics.y + 0.64,
+        this.physics.z + leftZ,
+      );
       this.camera.fov = THREE.MathUtils.damp(this.camera.fov, 44, 6, dt);
       this.camera.updateProjectionMatrix();
       if (this.speedBlurPass) {
@@ -1933,13 +1959,31 @@ export class GameEngine {
       this.rainPoints.geometry.attributes.position.needsUpdate = true;
     }
 
-    // Additive Tire Smoke & Asphalt Rubber Skidmark Systems
-    this.tireSmoke.update(dt, this.physics, spec, input, this.weather);
+    // Volumetric Tire Smoke triggered when driftAngleDeg exceeds threshold + Asphalt Skidmarks
     const isBurnout =
       this.physics.surface === 'asphalt' &&
       input.throttle > 0.65 &&
       input.brake > 0.35 &&
       this.physics.speedKmh < 28;
+    const driftAngleExceeded =
+      this.physics.driftAngleDeg > DRIFT_SMOKE_ANGLE_THRESHOLD_DEG &&
+      this.physics.speedKmh > 14;
+    const driftSmokeActive =
+      this.physics.grounded &&
+      (driftAngleExceeded ||
+        (input.handbrake && this.physics.speedKmh > 18) ||
+        isBurnout);
+
+    if (driftSmokeActive && !this.wasDriftSmokeActive && driftAngleExceeded) {
+      this.tireSmoke.emitDriftEntryBurst(this.physics, spec, atm.dayFactor);
+    }
+    this.wasDriftSmokeActive = driftSmokeActive;
+
+    this.tireSmoke.update(dt, this.physics, spec, input, this.weather, {
+      driftThresholdDeg: DRIFT_SMOKE_ANGLE_THRESHOLD_DEG,
+      daylightFactor: atm.dayFactor,
+      driftActive: driftSmokeActive,
+    });
     this.skidmarks.update(this.physics, spec, input.handbrake, isBurnout);
 
     const driftAudioLevel = Math.max(

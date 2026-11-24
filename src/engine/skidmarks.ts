@@ -103,7 +103,7 @@ export class TireSkidmarkSystem {
     const shouldMark =
       physics.grounded &&
       physics.surface === 'asphalt' &&
-      ((physics.driftAngleDeg > 13 && physics.speedKmh > 16) ||
+      ((physics.driftAngleDeg > 10 && physics.speedKmh > 14) ||
         (handbrake && physics.speedKmh > 18) ||
         isBurnout);
 

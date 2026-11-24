@@ -183,6 +183,10 @@ export default function App() {
   }, [save.settings]);
 
   useEffect(() => {
+    engineRef.current?.setShowcaseRightOffset(screen === 'main_menu');
+  }, [screen]);
+
+  useEffect(() => {
     const unlockAudio = () => {
       audioEngine.init();
       audioEngine.applySettings(save.settings);

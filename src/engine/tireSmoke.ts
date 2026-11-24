@@ -2,7 +2,13 @@ import * as THREE from 'three';
 import { CarBaseSpec, ControlInputState, WeatherType } from '../types/game';
 import { VehiclePhysicsState } from './physics';
 
-const MAX_PARTICLES = 360;
+const MAX_PARTICLES = 440;
+
+export interface TireSmokeUpdateOptions {
+  driftThresholdDeg?: number;
+  daylightFactor?: number;
+  driftActive?: boolean;
+}
 
 export class TireSmokeSystem {
   public readonly points: THREE.Points;
@@ -63,7 +69,7 @@ export class TireSmokeSystem {
       uniforms: {
         uPixelHeight: { value: Math.max(240, initialViewportHeightPx) },
       },
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       transparent: true,
       depthWrite: false,
       depthTest: true,
@@ -83,7 +89,7 @@ export class TireSmokeSystem {
           vRotation = aRotation;
           vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
           float dist = max(1.0, -mvPosition.z);
-          gl_PointSize = clamp(aSize * (uPixelHeight * 0.92 / dist), 1.0, 240.0);
+          gl_PointSize = clamp(aSize * (uPixelHeight * 0.96 / dist), 1.0, 260.0);
           gl_Position = projectionMatrix * mvPosition;
         }
       `,
@@ -106,13 +112,17 @@ export class TireSmokeSystem {
           float r = length(p) * 2.0;
           if (r >= 1.0) discard;
 
-          float lobeA = sin(p.x * 8.5 + 1.2) * cos(p.y * 8.5 - 0.7) * 0.13;
-          float lobeB = cos((p.x - p.y) * 11.0 + 0.4) * 0.07;
+          float lobeA = sin(p.x * 8.5 + 1.2) * cos(p.y * 8.5 - 0.7) * 0.14;
+          float lobeB = cos((p.x - p.y) * 11.0 + 0.4) * 0.08;
           float radial = clamp(1.0 - r + lobeA + lobeB, 0.0, 1.0);
-          float softPuff = smoothstep(0.0, 0.88, radial);
-          float alpha = pow(softPuff, 1.45) * vAlpha;
+          float softPuff = smoothstep(0.0, 0.86, radial);
+          float alpha = pow(softPuff, 1.32) * vAlpha;
 
-          gl_FragColor = vec4(vColor * alpha, alpha);
+          // Subtle top-lit volumetric rim vs cooler underside
+          float rimShade = clamp(0.84 + (-centered.y * 0.24 - centered.x * 0.08), 0.72, 1.08);
+          vec3 litColor = min(vec3(1.0), vColor * rimShade);
+
+          gl_FragColor = vec4(litColor, alpha);
         }
       `,
     });
@@ -177,7 +187,58 @@ export class TireSmokeSystem {
     this.sizes[i] = sSize;
     this.alphas[i] = 0.01;
     this.rotations[i] = Math.random() * Math.PI * 2;
-    this.spinVel[i] = (Math.random() - 0.5) * 1.8;
+    this.spinVel[i] = (Math.random() - 0.5) * 2.1;
+  }
+
+  /**
+   * Emits an immediate multi-puff burst behind both rear tires when driftAngleDeg
+   * first crosses the active drift threshold.
+   */
+  public emitDriftEntryBurst(
+    physics: VehiclePhysicsState,
+    carSpec: CarBaseSpec,
+    daylightFactor = 1,
+  ): void {
+    if (!physics.grounded) return;
+    const sinH = Math.sin(physics.heading);
+    const cosH = Math.cos(physics.heading);
+    const rearZ = -carSpec.dimensions.length * 0.31;
+    const halfTrack = carSpec.dimensions.width * 0.42;
+    const wheelY = physics.y + 0.16;
+    const ambientLit = 0.34 + 0.66 * Math.max(0, Math.min(1, daylightFactor));
+    const latThrow = -Math.sign(physics.lateralSpeedMs || 0) * 1.4;
+    const baseVx = physics.vx * 0.2 - sinH * 1.8 + cosH * latThrow;
+    const baseVz = physics.vz * 0.2 - cosH * 1.8 - sinH * latThrow;
+
+    const puffsPerTire = physics.surface === 'asphalt' ? 3 : 2;
+    for (const side of [-1, 1]) {
+      const lx = side * halfTrack;
+      const anchorX = physics.x + lx * cosH + rearZ * sinH;
+      const anchorZ = physics.z - lx * sinH + rearZ * cosH;
+      for (let k = 0; k < puffsPerTire; k++) {
+        const tint = (0.86 + Math.random() * 0.12) * ambientLit;
+        this.spawnParticle(
+          anchorX + (Math.random() - 0.5) * 0.26,
+          wheelY + Math.random() * 0.08,
+          anchorZ + (Math.random() - 0.5) * 0.26,
+          baseVx + (Math.random() - 0.5) * 2.4,
+          1.15 + Math.random() * 0.9,
+          baseVz + (Math.random() - 0.5) * 2.4,
+          tint,
+          tint * 1.01,
+          tint * 1.04,
+          0.95 + Math.random() * 0.45,
+          0.55 + Math.random() * 0.2,
+          2.6 + Math.random() * 0.9,
+          0.42,
+        );
+      }
+    }
+    this.posAttr.needsUpdate = true;
+    this.sizeAttr.needsUpdate = true;
+    this.alphaAttr.needsUpdate = true;
+    this.colorAttr.needsUpdate = true;
+    this.rotAttr.needsUpdate = true;
   }
 
   public update(
@@ -186,15 +247,21 @@ export class TireSmokeSystem {
     carSpec: CarBaseSpec,
     input: ControlInputState,
     weather: WeatherType,
+    options?: TireSmokeUpdateOptions,
   ): void {
+    const thresholdDeg = options?.driftThresholdDeg ?? 10;
+    const daylightFactor = Math.max(0, Math.min(1, options?.daylightFactor ?? 1));
+    const ambientLit = 0.34 + 0.66 * daylightFactor;
+
     const isWetWeather =
       weather === 'rain' ||
       weather === 'heavy_rain' ||
       weather === 'thunderstorm';
 
     const driftTriggered =
-      (physics.driftAngleDeg > 15 && physics.speedKmh > 16) ||
-      (input.handbrake && physics.speedKmh > 20);
+      options?.driftActive ??
+      ((physics.driftAngleDeg > thresholdDeg && physics.speedKmh > 14) ||
+        (input.handbrake && physics.speedKmh > 18));
     const isBurnout =
       physics.surface === 'asphalt' &&
       input.throttle > 0.65 &&
@@ -202,94 +269,95 @@ export class TireSmokeSystem {
       physics.speedKmh < 28;
     const isOffroadSpray =
       physics.surface !== 'asphalt' &&
-      (physics.speedKmh > 26 || physics.driftAngleDeg > 15);
+      (physics.speedKmh > 24 || physics.driftAngleDeg > thresholdDeg);
 
     if (physics.grounded && (driftTriggered || isBurnout || isOffroadSpray)) {
+      const slipExcess = Math.max(0, physics.driftAngleDeg - (thresholdDeg - 1));
       const slipStrength = driftTriggered
-        ? Math.min(1, 0.42 + Math.max(0, physics.driftAngleDeg - 13) / 28)
+        ? Math.min(1, 0.36 + slipExcess / 26)
         : isBurnout
-          ? 0.85
-          : Math.min(0.9, physics.speedKmh / 110);
+          ? 0.9
+          : Math.min(0.92, physics.speedKmh / 105);
 
-      // Surface-calibrated smoke/dust/spray profile for additive blending
-      let cr = 0.45;
-      let cg = 0.48;
-      let cb = 0.54;
-      let lifeMin = 1.05;
-      let lifeSpan = 0.45;
-      let sSize = 0.55;
-      let eSize = 3.25;
-      let upVel = 1.45;
-      let peakA = 0.24 * (0.55 + slipStrength * 0.45);
-      let emitRate = 22 + slipStrength * 28;
+      // Surface-calibrated smoke/dust/spray profile for NormalBlending volumetric puffs
+      let cr = (0.86 + 0.08 * slipStrength) * ambientLit;
+      let cg = (0.87 + 0.07 * slipStrength) * ambientLit;
+      let cb = (0.91 + 0.05 * slipStrength) * ambientLit;
+      let lifeMin = 1.05 + slipStrength * 0.25;
+      let lifeSpan = 0.5;
+      let sSize = 0.56 + slipStrength * 0.14;
+      let eSize = 3.15 + slipStrength * 1.15;
+      let upVel = 1.35 + slipStrength * 0.55;
+      let peakA = (0.34 + slipStrength * 0.24) * (0.82 + 0.18 * daylightFactor);
+      let emitRate = 24 + slipStrength * 34;
 
       if (physics.surface === 'asphalt') {
         if (isWetWeather && !isBurnout) {
-          cr = 0.36;
-          cg = 0.45;
-          cb = 0.55;
+          cr = 0.72 * ambientLit;
+          cg = 0.80 * ambientLit;
+          cb = 0.88 * ambientLit;
           lifeMin = 0.75;
           lifeSpan = 0.35;
-          eSize = 3.5;
-          upVel = 1.7;
-          peakA = 0.21 * (0.5 + slipStrength * 0.5);
+          eSize = 3.4 + slipStrength * 0.8;
+          upVel = 1.75;
+          peakA = 0.28 + slipStrength * 0.18;
         }
       } else if (physics.surface === 'dirt') {
-        cr = 0.44;
-        cg = 0.31;
-        cb = 0.18;
-        lifeMin = 0.9;
+        cr = 0.68 * ambientLit;
+        cg = 0.50 * ambientLit;
+        cb = 0.30 * ambientLit;
+        lifeMin = 0.95;
         lifeSpan = 0.45;
-        sSize = 0.62;
-        eSize = 3.45;
-        upVel = 1.8;
-        peakA = 0.23;
+        sSize = 0.64;
+        eSize = 3.55;
+        upVel = 1.85;
+        peakA = 0.40 + slipStrength * 0.16;
       } else if (physics.surface === 'grass') {
-        cr = 0.32;
-        cg = 0.39;
-        cb = 0.20;
+        cr = 0.50 * ambientLit;
+        cg = 0.60 * ambientLit;
+        cb = 0.32 * ambientLit;
         lifeMin = 0.85;
         lifeSpan = 0.4;
-        sSize = 0.58;
-        eSize = 3.1;
-        upVel = 1.7;
-        peakA = 0.20;
-      } else if (physics.surface === 'sand') {
-        cr = 0.50;
-        cg = 0.40;
-        cb = 0.24;
-        lifeMin = 0.8;
-        lifeSpan = 0.4;
-        sSize = 0.65;
+        sSize = 0.6;
         eSize = 3.2;
-        upVel = 2.3;
-        peakA = 0.24;
-        emitRate += 6;
+        upVel = 1.7;
+        peakA = 0.34 + slipStrength * 0.14;
+      } else if (physics.surface === 'sand') {
+        cr = 0.82 * ambientLit;
+        cg = 0.68 * ambientLit;
+        cb = 0.44 * ambientLit;
+        lifeMin = 0.85;
+        lifeSpan = 0.4;
+        sSize = 0.66;
+        eSize = 3.35;
+        upVel = 2.35;
+        peakA = 0.42 + slipStrength * 0.15;
+        emitRate += 8;
       } else if (physics.surface === 'snow') {
-        cr = 0.48;
-        cg = 0.54;
-        cb = 0.62;
-        lifeMin = 0.75;
+        cr = 0.88 * ambientLit;
+        cg = 0.93 * ambientLit;
+        cb = 0.98 * ambientLit;
+        lifeMin = 0.8;
         lifeSpan = 0.35;
-        sSize = 0.58;
-        eSize = 2.95;
+        sSize = 0.6;
+        eSize = 3.1;
         upVel = 2.4;
-        peakA = 0.25;
-        emitRate += 6;
+        peakA = 0.44 + slipStrength * 0.16;
+        emitRate += 8;
       } else if (physics.surface === 'water') {
-        cr = 0.34;
-        cg = 0.48;
-        cb = 0.58;
+        cr = 0.74 * ambientLit;
+        cg = 0.86 * ambientLit;
+        cb = 0.94 * ambientLit;
         lifeMin = 0.55;
         lifeSpan = 0.3;
-        sSize = 0.62;
-        eSize = 2.85;
+        sSize = 0.64;
+        eSize = 3.0;
         upVel = 3.1;
-        peakA = 0.26;
+        peakA = 0.42;
       }
 
       this.emitAccumulator += dt * emitRate;
-      const pairsToEmit = Math.min(4, Math.floor(this.emitAccumulator));
+      const pairsToEmit = Math.min(5, Math.floor(this.emitAccumulator));
       if (pairsToEmit > 0) {
         this.emitAccumulator -= pairsToEmit;
 
@@ -298,9 +366,10 @@ export class TireSmokeSystem {
         const rearZ = -carSpec.dimensions.length * 0.31;
         const halfTrack = carSpec.dimensions.width * 0.42;
 
-        // World velocity contribution & rear-ward wheel spray
-        const baseVx = physics.vx * 0.22 - sinH * 1.6;
-        const baseVz = physics.vz * 0.22 - cosH * 1.6;
+        // World velocity contribution, rear-ward wheel spray & outward drift wake curl
+        const latCurl = -Math.sign(physics.lateralSpeedMs || 0) * (0.9 + slipStrength * 1.4);
+        const baseVx = physics.vx * 0.22 - sinH * 1.7 + cosH * latCurl;
+        const baseVz = physics.vz * 0.22 - cosH * 1.7 - sinH * latCurl;
         const wheelY = physics.y + 0.16;
 
         for (let p = 0; p < pairsToEmit; p++) {
@@ -310,27 +379,27 @@ export class TireSmokeSystem {
               physics.x +
               lx * cosH +
               rearZ * sinH +
-              (Math.random() - 0.5) * 0.22;
+              (Math.random() - 0.5) * 0.24;
             const wz =
               physics.z -
               lx * sinH +
               rearZ * cosH +
-              (Math.random() - 0.5) * 0.22;
+              (Math.random() - 0.5) * 0.24;
 
-            const tintVar = 0.92 + Math.random() * 0.16;
+            const tintVar = 0.92 + Math.random() * 0.14;
             this.spawnParticle(
               wx,
               wheelY + Math.random() * 0.08,
               wz,
-              baseVx + (Math.random() - 0.5) * 2.1,
+              baseVx + (Math.random() - 0.5) * 2.2,
               upVel * (0.75 + Math.random() * 0.5),
-              baseVz + (Math.random() - 0.5) * 2.1,
-              cr * tintVar,
-              cg * tintVar,
-              cb * tintVar,
+              baseVz + (Math.random() - 0.5) * 2.2,
+              Math.min(1, cr * tintVar),
+              Math.min(1, cg * tintVar),
+              Math.min(1, cb * tintVar),
               lifeMin + Math.random() * lifeSpan,
               sSize * (0.85 + Math.random() * 0.3),
-              eSize * (0.85 + Math.random() * 0.35),
+              eSize * (0.88 + Math.random() * 0.35),
               peakA,
             );
           }
