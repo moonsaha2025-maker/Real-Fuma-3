@@ -17,6 +17,24 @@ export interface CarModelRig {
   setBodyTilt: (pitchRad: number, rollRad: number, heaveY: number) => void;
   setDirt: (dirtLevel: number, washProgress?: number, washFoam?: number) => void;
   setDamage: (damageLevel: number) => void;
+  getCockpitAnchors: () => {
+    eyeLocal: THREE.Vector3;
+    lookLocal: THREE.Vector3;
+  };
+  setCockpitState: (params: {
+    active: boolean;
+    steerRad: number;
+    rpm: number;
+    maxRpm: number;
+    speedKmh: number;
+    gear: number;
+    nitro: number;
+    nitroMax: number;
+    headlightsOn: boolean;
+    nitroActive: boolean;
+    absActive: boolean;
+    tcsActive: boolean;
+  }) => void;
   dispose: () => void;
 }
 
@@ -1012,17 +1030,531 @@ export function createCarModel(
   const bodyTrimParts: THREE.BufferGeometry[] = [];
   const chromeParts: THREE.BufferGeometry[] = [];
 
-  // Cockpit interior: dashboard cowl, bucket seats with headrests, steering wheel
+  // Cockpit geometry & dynamic interior gauges + animated steering wheel
+  const isCabForward = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
+  const driverX = W * 0.172; // Left-hand drive (+X is driver left when facing +Z)
+  const eyeY = clearance + H * 0.855;
+  const eyeZ = isCabForward ? L * 0.008 : -L * 0.022;
+  const cockpitEyeLocal = new THREE.Vector3(driverX, eyeY, eyeZ);
+  const cockpitLookLocal = new THREE.Vector3(driverX, eyeY - 0.11, eyeZ + 18.0);
+
+  let steeringWheelRollPivot: THREE.Group | null = null;
+  let gaugeTex: THREE.CanvasTexture | null = null;
+  let gaugeMat: THREE.MeshStandardMaterial | null = null;
+  let updateGaugeCanvas: ((params: {
+    active: boolean;
+    steerRad: number;
+    rpm: number;
+    maxRpm: number;
+    speedKmh: number;
+    gear: number;
+    nitro: number;
+    nitroMax: number;
+    headlightsOn: boolean;
+    nitroActive: boolean;
+    absActive: boolean;
+    tcsActive: boolean;
+  }) => void) | null = null;
+
   if (!lightweight) {
-    addPart(darkTrimParts, new THREE.BoxGeometry(W * 0.56, 0.12, 0.24), 0, clearance + H * 0.56, L * 0.10);
+    // Bucket seats with bolsters & headrests (placed safely behind driver eyeZ)
     for (const side of [-1, 1]) {
-      const sx = side * W * 0.17;
-      // Seat bolster + backrest + headrest
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.32, 0.34, 0.14), sx, clearance + H * 0.58, -L * 0.07, -0.24);
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.18, 0.14, 0.09), sx, clearance + H * 0.78, -L * 0.11, -0.15);
+      const sx = side * W * 0.172;
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.34, 0.36, 0.13), sx, clearance + H * 0.58, -L * 0.085, -0.22);
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.18, 0.14, 0.085), sx, clearance + H * 0.78, -L * 0.12, -0.14);
     }
-    const swGeo = new THREE.TorusGeometry(0.125, 0.018, 6, 16);
-    addPart(darkTrimParts, swGeo, -W * 0.17, clearance + H * 0.62, L * 0.055, -0.35);
+
+    // Interior cockpit assembly attached to chassisGroup so pitch/roll/heave animate naturally
+    const cockpitGroup = new THREE.Group();
+    chassisGroup.add(cockpitGroup);
+
+    const alcantaraMat = new THREE.MeshStandardMaterial({
+      color: 0x11141a,
+      roughness: 0.86,
+      metalness: 0.08,
+    });
+    const alloyTrimMat = new THREE.MeshStandardMaterial({
+      color: 0xcbd5e1,
+      roughness: 0.26,
+      metalness: 0.86,
+    });
+    const stripeMat = new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      emissive: 0x991b1b,
+      emissiveIntensity: 0.35,
+      roughness: 0.4,
+      metalness: 0.2,
+    });
+
+    const dashZ = eyeZ + 0.455;
+    const dashDeckY = clearance + H * 0.652;
+    const gaugeY = clearance + H * 0.728;
+    const swZ = eyeZ + 0.335;
+    const swY = clearance + H * 0.695;
+
+    // 1. Sculpted dashboard main shelf, lower skirt, and gauge binnacle hood cowl
+    const dashDeck = new THREE.Mesh(
+      new THREE.BoxGeometry(W * 0.68, 0.095, 0.24),
+      alcantaraMat,
+    );
+    dashDeck.position.set(0, dashDeckY, dashZ + 0.035);
+    dashDeck.rotation.x = 0.08;
+    cockpitGroup.add(dashDeck);
+
+    // Carbon fascia strip across dashboard front
+    const dashFascia = new THREE.Mesh(
+      new THREE.BoxGeometry(W * 0.64, 0.048, 0.035),
+      carbonMat,
+    );
+    dashFascia.position.set(0, dashDeckY - 0.015, dashZ - 0.08);
+    cockpitGroup.add(dashFascia);
+
+    // Subtle colored accent pin-stripe matching car body color across passenger dash
+    const accentPin = new THREE.Mesh(
+      new THREE.BoxGeometry(W * 0.26, 0.008, 0.014),
+      bodyMaterial,
+    );
+    accentPin.position.set(-W * 0.14, dashDeckY + 0.005, dashZ - 0.095);
+    cockpitGroup.add(accentPin);
+
+    // Hooded instrument binnacle brow directly ahead of driver
+    const binnacleBack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.125, 0.075),
+      alcantaraMat,
+    );
+    binnacleBack.position.set(driverX, gaugeY, dashZ - 0.01);
+    binnacleBack.rotation.x = 0.20;
+    cockpitGroup.add(binnacleBack);
+
+    const binnacleVisor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.295, 0.022, 0.115),
+      carbonMat,
+    );
+    binnacleVisor.position.set(driverX, gaugeY + 0.068, dashZ - 0.035);
+    binnacleVisor.rotation.x = 0.14;
+    cockpitGroup.add(binnacleVisor);
+
+    // Center console bridge + slanted infotainment telemetry pod + alloy shifter stalk
+    const consoleBridge = new THREE.Mesh(
+      new THREE.BoxGeometry(0.19, 0.095, 0.56),
+      carbonMat,
+    );
+    consoleBridge.position.set(0, clearance + H * 0.618, eyeZ + 0.18);
+    cockpitGroup.add(consoleBridge);
+
+    const centerScreenFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.082, 0.022),
+      alcantaraMat,
+    );
+    centerScreenFrame.position.set(0, dashDeckY + 0.028, dashZ - 0.068);
+    centerScreenFrame.rotation.x = 0.28;
+    centerScreenFrame.rotation.y = -0.14;
+    cockpitGroup.add(centerScreenFrame);
+
+    const centerScreenGlow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.122, 0.064),
+      new THREE.MeshBasicMaterial({ color: 0x0c2438 }),
+    );
+    centerScreenGlow.position.set(0, 0, -0.012);
+    centerScreenGlow.rotation.y = Math.PI;
+    centerScreenFrame.add(centerScreenGlow);
+
+    const shifterBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.028, 0.036, 0.024, 12),
+      alloyTrimMat,
+    );
+    shifterBase.position.set(0, clearance + H * 0.672, eyeZ + 0.22);
+    cockpitGroup.add(shifterBase);
+
+    const shifterKnob = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.014, 0.011, 0.068, 10),
+      alloyTrimMat,
+    );
+    shifterKnob.position.set(0, clearance + H * 0.708, eyeZ + 0.215);
+    shifterKnob.rotation.x = -0.16;
+    cockpitGroup.add(shifterKnob);
+
+    // Interior Rearview Mirror & Top Windshield Header Strip
+    const mirrorHousing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.165, 0.044, 0.026),
+      alcantaraMat,
+    );
+    mirrorHousing.position.set(0, clearance + H * 0.905, eyeZ + 0.36);
+    mirrorHousing.rotation.x = -0.12;
+    cockpitGroup.add(mirrorHousing);
+
+    const mirrorGlass = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.15, 0.034),
+      new THREE.MeshStandardMaterial({
+        color: 0x334155,
+        metalness: 0.92,
+        roughness: 0.08,
+      }),
+    );
+    mirrorGlass.position.set(0, 0, -0.014);
+    mirrorGlass.rotation.y = Math.PI;
+    mirrorHousing.add(mirrorGlass);
+
+    // 2. Functional Dynamic Dashboard Gauge Cluster (512x256 CanvasTexture)
+    const gaugeW = 512;
+    const gaugeH = 256;
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = gaugeW;
+    bgCanvas.height = gaugeH;
+    const bgCtx = bgCanvas.getContext('2d')!;
+
+    // Pre-render static high-contrast analog/digital dial faceplate once
+    const bgGrad = bgCtx.createLinearGradient(0, 0, 0, gaugeH);
+    bgGrad.addColorStop(0, '#070b14');
+    bgGrad.addColorStop(1, '#03050a');
+    bgCtx.fillStyle = bgGrad;
+    bgCtx.fillRect(0, 0, gaugeW, gaugeH);
+
+    // Subtle carbon horizontal scanlines
+    bgCtx.fillStyle = 'rgba(255,255,255,0.025)';
+    for (let y = 0; y < gaugeH; y += 4) {
+      bgCtx.fillRect(0, y, gaugeW, 1);
+    }
+
+    const drawDialBase = (
+      cx: number,
+      cy: number,
+      r: number,
+      maxVal: number,
+      step: number,
+      redlineFrom: number,
+      unitLabel: string,
+      accent: string,
+    ) => {
+      const startDeg = 140;
+      const sweepDeg = 260;
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+
+      // Outer bezel ring
+      bgCtx.beginPath();
+      bgCtx.arc(cx, cy, r + 6, toRad(startDeg - 4), toRad(startDeg + sweepDeg + 4));
+      bgCtx.strokeStyle = 'rgba(148,163,184,0.22)';
+      bgCtx.lineWidth = 3;
+      bgCtx.stroke();
+
+      // Colored base track arc
+      bgCtx.beginPath();
+      bgCtx.arc(cx, cy, r - 4, toRad(startDeg), toRad(startDeg + sweepDeg));
+      bgCtx.strokeStyle = accent;
+      bgCtx.lineWidth = 4;
+      bgCtx.stroke();
+
+      // Redline arc if applicable
+      if (redlineFrom < maxVal) {
+        const redFrac = redlineFrom / maxVal;
+        bgCtx.beginPath();
+        bgCtx.arc(
+          cx,
+          cy,
+          r - 4,
+          toRad(startDeg + sweepDeg * redFrac),
+          toRad(startDeg + sweepDeg),
+        );
+        bgCtx.strokeStyle = '#ef4444';
+        bgCtx.lineWidth = 5;
+        bgCtx.stroke();
+      }
+
+      // Tick marks & crisp numerals
+      bgCtx.textAlign = 'center';
+      bgCtx.textBaseline = 'middle';
+      bgCtx.font = '700 13px monospace';
+      for (let v = 0; v <= maxVal; v += step * 0.5) {
+        const frac = v / maxVal;
+        const ang = toRad(startDeg + sweepDeg * frac);
+        const isMajor = Math.abs(v / step - Math.round(v / step)) < 0.01;
+        const isRed = v >= redlineFrom;
+        const rIn = isMajor ? r - 18 : r - 11;
+        const rOut = r - 4;
+
+        bgCtx.beginPath();
+        bgCtx.moveTo(cx + Math.cos(ang) * rIn, cy + Math.sin(ang) * rIn);
+        bgCtx.lineTo(cx + Math.cos(ang) * rOut, cy + Math.sin(ang) * rOut);
+        bgCtx.strokeStyle = isRed ? '#f87171' : isMajor ? '#f8fafc' : 'rgba(203,213,225,0.45)';
+        bgCtx.lineWidth = isMajor ? 2.6 : 1.3;
+        bgCtx.stroke();
+
+        if (isMajor) {
+          const rTxt = r - 31;
+          bgCtx.fillStyle = isRed ? '#fca5a5' : '#e2e8f0';
+          bgCtx.fillText(String(Math.round(v)), cx + Math.cos(ang) * rTxt, cy + Math.sin(ang) * rTxt);
+        }
+      }
+
+      bgCtx.fillStyle = 'rgba(148,163,184,0.85)';
+      bgCtx.font = '700 11px sans-serif';
+      bgCtx.fillText(unitLabel, cx, cy + r * 0.44);
+    };
+
+    drawDialBase(116, 146, 86, 9, 1, 7.2, 'RPM x1000', 'rgba(56,189,248,0.45)');
+    drawDialBase(396, 146, 86, 400, 50, 999, 'KM/H', 'rgba(245,158,11,0.42)');
+
+    // Center digital telemetry frame
+    bgCtx.fillStyle = 'rgba(15,23,42,0.88)';
+    bgCtx.fillRect(204, 48, 104, 178);
+    bgCtx.strokeStyle = 'rgba(56,189,248,0.35)';
+    bgCtx.lineWidth = 2;
+    bgCtx.strokeRect(204, 48, 104, 178);
+
+    const liveCanvas = document.createElement('canvas');
+    liveCanvas.width = gaugeW;
+    liveCanvas.height = gaugeH;
+    const liveCtx = liveCanvas.getContext('2d')!;
+    liveCtx.drawImage(bgCanvas, 0, 0);
+
+    gaugeTex = new THREE.CanvasTexture(liveCanvas);
+    gaugeTex.colorSpace = THREE.SRGBColorSpace;
+    gaugeTex.generateMipmaps = false;
+    gaugeTex.minFilter = THREE.LinearFilter;
+    gaugeTex.magFilter = THREE.LinearFilter;
+
+    gaugeMat = new THREE.MeshStandardMaterial({
+      map: gaugeTex,
+      emissiveMap: gaugeTex,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.92,
+      roughness: 0.22,
+      metalness: 0.1,
+    });
+
+    const gaugePanel = new THREE.Mesh(new THREE.PlaneGeometry(0.255, 0.114), gaugeMat);
+    gaugePanel.position.set(driverX, gaugeY + 0.002, dashZ - 0.049);
+    gaugePanel.rotation.x = 0.20;
+    gaugePanel.rotation.y = Math.PI; // Normal points toward driver (-Z) with upright non-mirrored UVs
+    cockpitGroup.add(gaugePanel);
+
+    let smoothedGaugeRpmNorm = 0.1;
+    let smoothedGaugeSpeed = 0;
+    let lastDrawStamp = '';
+
+    const drawNeedle = (
+      ctx: CanvasRenderingContext2D,
+      cx: number,
+      cy: number,
+      r: number,
+      frac: number,
+      needleColor: string,
+    ) => {
+      const ang = ((140 + 260 * THREE.MathUtils.clamp(frac, 0, 1)) * Math.PI) / 180;
+      const nx = Math.cos(ang);
+      const ny = Math.sin(ang);
+
+      // Soft needle glow
+      ctx.save();
+      ctx.strokeStyle = needleColor;
+      ctx.shadowColor = needleColor;
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - nx * 12, cy - ny * 12);
+      ctx.lineTo(cx + nx * (r - 12), cy + ny * (r - 12));
+      ctx.stroke();
+
+      // Center cap
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    updateGaugeCanvas = ({
+      active,
+      rpm,
+      maxRpm,
+      speedKmh,
+      gear,
+      nitro,
+      nitroMax,
+      headlightsOn,
+      nitroActive,
+      absActive,
+      tcsActive,
+    }) => {
+      if (!gaugeTex || !gaugeMat) return;
+      gaugeMat.emissiveIntensity = headlightsOn ? 1.15 : 0.92;
+      if (!active) return;
+
+      const targetRpmNorm = THREE.MathUtils.clamp(rpm / Math.max(1000, maxRpm), 0, 1);
+      smoothedGaugeRpmNorm += (targetRpmNorm - smoothedGaugeRpmNorm) * 0.35;
+      smoothedGaugeSpeed += (speedKmh - smoothedGaugeSpeed) * 0.35;
+
+      const speedInt = Math.round(smoothedGaugeSpeed);
+      const rpmBucket = Math.round(smoothedGaugeRpmNorm * 180);
+      const nitroBucket = Math.round((nitro / Math.max(1, nitroMax)) * 40);
+      const stamp = `${speedInt}|${rpmBucket}|${gear}|${nitroBucket}|${headlightsOn ? 1 : 0}|${nitroActive ? 1 : 0}|${absActive ? 1 : 0}|${tcsActive ? 1 : 0}`;
+      if (stamp === lastDrawStamp) return;
+      lastDrawStamp = stamp;
+
+      liveCtx.drawImage(bgCanvas, 0, 0);
+
+      // Top 7-LED RPM shift light bar
+      const ledColors = ['#22c55e', '#22c55e', '#22c55e', '#f59e0b', '#f59e0b', '#ef4444', '#ef4444'];
+      for (let i = 0; i < 7; i++) {
+        const thresh = 0.52 + i * 0.068;
+        const lit = smoothedGaugeRpmNorm >= thresh;
+        const lx = 190 + i * 22;
+        liveCtx.fillStyle = lit ? ledColors[i] : 'rgba(51,65,85,0.45)';
+        liveCtx.beginPath();
+        liveCtx.arc(lx, 20, 6, 0, Math.PI * 2);
+        liveCtx.fill();
+      }
+
+      // Active RPM sweep glow arc
+      const rpmEndRad = ((140 + 260 * smoothedGaugeRpmNorm) * Math.PI) / 180;
+      liveCtx.beginPath();
+      liveCtx.arc(116, 146, 82, (140 * Math.PI) / 180, rpmEndRad);
+      liveCtx.strokeStyle = smoothedGaugeRpmNorm > 0.84 ? '#ef4444' : '#38bdf8';
+      liveCtx.lineWidth = 6;
+      liveCtx.stroke();
+
+      // Analog needles (Tach scaled to 9000 RPM dial, Speedo scaled to 400 km/h)
+      const tachFrac = THREE.MathUtils.clamp((rpm / Math.max(1000, maxRpm)) * (Math.min(9000, maxRpm) / 9000), 0, 1);
+      const speedFrac = THREE.MathUtils.clamp(smoothedGaugeSpeed / 400, 0, 1);
+      drawNeedle(liveCtx, 116, 146, 86, tachFrac, '#ff3b5c');
+      drawNeedle(liveCtx, 396, 146, 86, speedFrac, '#38bdf8');
+
+      // Center Gear Box
+      const gearStr = gear < 0 ? 'R' : gear === 0 ? 'N' : String(gear);
+      liveCtx.textAlign = 'center';
+      liveCtx.textBaseline = 'middle';
+      liveCtx.fillStyle = nitroActive ? '#38bdf8' : smoothedGaugeRpmNorm > 0.88 ? '#ef4444' : '#fbbf24';
+      liveCtx.font = '800 50px sans-serif';
+      liveCtx.fillText(gearStr, 256, 88);
+
+      // Center Digital Speed
+      liveCtx.fillStyle = '#f8fafc';
+      liveCtx.font = '700 32px monospace';
+      liveCtx.fillText(String(Math.max(0, Math.round(speedKmh))), 256, 140);
+      liveCtx.fillStyle = '#94a3b8';
+      liveCtx.font = '700 10px sans-serif';
+      liveCtx.fillText('KM/H', 256, 163);
+
+      // Center NOS Gauge Bar
+      const nitroRatio = THREE.MathUtils.clamp(nitro / Math.max(1, nitroMax), 0, 1);
+      liveCtx.fillStyle = '#0f172a';
+      liveCtx.fillRect(216, 180, 80, 10);
+      liveCtx.fillStyle = nitroActive ? '#7dd3fc' : '#0ea5e9';
+      liveCtx.fillRect(216, 180, 80 * nitroRatio, 10);
+      liveCtx.fillStyle = nitroActive ? '#e0f2fe' : '#64748b';
+      liveCtx.font = '700 9px sans-serif';
+      liveCtx.fillText(nitroActive ? 'NOS ACTIVE' : 'NOS', 256, 198);
+
+      // Telltale warning indicators (HL / ABS / TCS)
+      liveCtx.font = '800 9px sans-serif';
+      liveCtx.fillStyle = headlightsOn ? '#38bdf8' : 'rgba(71,85,105,0.45)';
+      liveCtx.fillText('BEAM', 222, 216);
+      liveCtx.fillStyle = absActive ? '#fbbf24' : 'rgba(71,85,105,0.45)';
+      liveCtx.fillText('ABS', 256, 216);
+      liveCtx.fillStyle = tcsActive ? '#fbbf24' : 'rgba(71,85,105,0.45)';
+      liveCtx.fillText('TCS', 288, 216);
+
+      gaugeTex.needsUpdate = true;
+    };
+
+    // 3. Functional Tilted 3D Racing Steering Wheel & Column
+    const columnPivot = new THREE.Group();
+    columnPivot.position.set(driverX, swY, swZ);
+    // Tilt column +X so wheel face normal (0,0,-1) angles slightly upward toward driver's eyes
+    columnPivot.rotation.x = 0.24;
+    cockpitGroup.add(columnPivot);
+
+    const columnShaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.024, 0.032, 0.22, 12),
+      carbonMat,
+    );
+    columnShaft.rotation.x = Math.PI / 2;
+    columnShaft.position.set(0, 0, 0.11);
+    columnPivot.add(columnShaft);
+
+    steeringWheelRollPivot = new THREE.Group();
+    columnPivot.add(steeringWheelRollPivot);
+
+    // Outer wheel rim
+    const swR = 0.116;
+    const swRim = new THREE.Mesh(
+      new THREE.TorusGeometry(swR, 0.0145, 10, 28),
+      alcantaraMat,
+    );
+    steeringWheelRollPivot.add(swRim);
+
+    // Sculpted side grip bolsters (9 & 3 o'clock)
+    for (const side of [-1, 1]) {
+      const grip = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.0175, 0.0175, 0.068, 10),
+        carbonMat,
+      );
+      grip.position.set(side * swR, 0, 0);
+      steeringWheelRollPivot.add(grip);
+
+      // Horizontal brushed aluminum spoke
+      const spoke = new THREE.Mesh(
+        new THREE.BoxGeometry(swR * 0.92, 0.024, 0.012),
+        alloyTrimMat,
+      );
+      spoke.position.set(side * swR * 0.46, -0.008, 0.004);
+      steeringWheelRollPivot.add(spoke);
+
+      // Shift paddle behind rim
+      const paddle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.022, 0.056, 0.006),
+        alloyTrimMat,
+      );
+      paddle.position.set(side * (swR * 0.68), 0.012, 0.024);
+      paddle.rotation.z = side * -0.14;
+      steeringWheelRollPivot.add(paddle);
+    }
+
+    // Bottom 6-o'clock vertical spoke
+    const bottomSpoke = new THREE.Mesh(
+      new THREE.BoxGeometry(0.032, swR * 0.9, 0.012),
+      alloyTrimMat,
+    );
+    bottomSpoke.position.set(0, -swR * 0.46, 0.004);
+    steeringWheelRollPivot.add(bottomSpoke);
+
+    // Vivid 12-o'clock centering stripe (makes steering angle unmistakable at speed!)
+    const topBand = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.0165, 0.0165, 0.024, 12),
+      stripeMat,
+    );
+    topBand.rotation.z = Math.PI / 2;
+    topBand.position.set(0, swR, 0);
+    steeringWheelRollPivot.add(topBand);
+
+    // Center hub boss + metallic emblem ring
+    const swHub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.044, 0.048, 0.032, 18),
+      alcantaraMat,
+    );
+    swHub.rotation.x = Math.PI / 2;
+    swHub.position.set(0, -0.006, 0.004);
+    steeringWheelRollPivot.add(swHub);
+
+    const hubRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.024, 0.0035, 6, 18),
+      alloyTrimMat,
+    );
+    hubRing.position.set(0, -0.006, -0.013);
+    steeringWheelRollPivot.add(hubRing);
+
+    const hubBadge = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.016, 0.016, 0.004, 14),
+      bodyMaterial,
+    );
+    hubBadge.rotation.x = Math.PI / 2;
+    hubBadge.position.set(0, -0.006, -0.013);
+    steeringWheelRollPivot.add(hubBadge);
   }
 
   // Flush A-pillars tucked inside windshield side edges & Flying Buttress C-pillars
@@ -1594,7 +2126,19 @@ export function createCarModel(
     setDamage: (damageLevel) => {
       dirtUniforms.uDamageLevel.value = THREE.MathUtils.clamp(damageLevel, 0, 1);
     },
+    getCockpitAnchors: () => ({
+      eyeLocal: cockpitEyeLocal,
+      lookLocal: cockpitLookLocal,
+    }),
+    setCockpitState: (params) => {
+      if (steeringWheelRollPivot) {
+        // Negative Z rotation turns 12-o'clock toward +X (driver's left) when steerRad > 0
+        steeringWheelRollPivot.rotation.z = -params.steerRad * 3.4;
+      }
+      updateGaugeCanvas?.(params);
+    },
     dispose: () => {
+      gaugeTex?.dispose();
       root.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh;

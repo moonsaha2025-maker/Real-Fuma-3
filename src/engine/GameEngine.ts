@@ -95,6 +95,10 @@ const _lightDir = new THREE.Vector3();
 const _lightRight = new THREE.Vector3();
 const _lightUp = new THREE.Vector3();
 const _focusPt = new THREE.Vector3();
+const _cockpitEyeWorld = new THREE.Vector3();
+const _cockpitLookWorld = new THREE.Vector3();
+const _cockpitUpWorld = new THREE.Vector3();
+const _cockpitHeadOffset = new THREE.Vector3();
 
 const SHADOW_HALF_EXTENT = 32;
 const DEFAULT_SHADOW_MAP_RES = 1536;
@@ -324,6 +328,9 @@ export class GameEngine {
   private onRegionUnlock?: (regionId: LiveTelemetry['regionId']) => void;
   private onDirtChange?: (carId: string, dirtLevel: number) => void;
   private onWashComplete?: () => void;
+  private onNoBrakeDriftUpdate?: (seconds: number) => void;
+  private continuousNoBrakeDriftSec = 0;
+  private bestNoBrakeDriftReported = 0;
 
   constructor(
     container: HTMLElement,
@@ -343,6 +350,7 @@ export class GameEngine {
       onRegionUnlock: (regionId: LiveTelemetry['regionId']) => void;
       onDirtChange?: (carId: string, dirtLevel: number) => void;
       onWashComplete?: () => void;
+      onNoBrakeDriftUpdate?: (seconds: number) => void;
     },
   ) {
     this.container = container;
@@ -353,6 +361,7 @@ export class GameEngine {
     this.onRegionUnlock = callbacks.onRegionUnlock;
     this.onDirtChange = callbacks.onDirtChange;
     this.onWashComplete = callbacks.onWashComplete;
+    this.onNoBrakeDriftUpdate = callbacks.onNoBrakeDriftUpdate;
 
     this.isSoftwareGl = detectSoftwareWebGL();
     this.renderer = new THREE.WebGLRenderer({
@@ -820,6 +829,7 @@ export class GameEngine {
       this.trafficAI.clearRacers();
       this.tireSmoke.clear();
       this.wasDriftSmokeActive = false;
+      this.continuousNoBrakeDriftSec = 0;
       this.skidmarks.clear();
       this.crashEffects.clear();
       this.crashFlash = 0;
@@ -912,6 +922,25 @@ export class GameEngine {
   }
 
   private snapDrivingCamera(): void {
+    if (this.cameraMode === 'cockpit' && this.playerCarRig) {
+      this.playerCarRig.chassisGroup.updateMatrixWorld(true);
+      const { eyeLocal, lookLocal } = this.playerCarRig.getCockpitAnchors();
+      _cockpitEyeWorld.copy(eyeLocal).applyMatrix4(this.playerCarRig.chassisGroup.matrixWorld);
+      _cockpitLookWorld.copy(lookLocal).applyMatrix4(this.playerCarRig.chassisGroup.matrixWorld);
+      _cockpitUpWorld
+        .set(0, 1, 0)
+        .transformDirection(this.playerCarRig.chassisGroup.matrixWorld)
+        .normalize();
+      this.camera.near = 0.08;
+      this.camera.fov = 68;
+      this.camera.position.copy(_cockpitEyeWorld);
+      this.camera.up.copy(_cockpitUpWorld);
+      this.camera.lookAt(_cockpitLookWorld);
+      this.camera.updateProjectionMatrix();
+      return;
+    }
+    this.camera.near = 0.2;
+    this.camera.up.copy(_worldUp);
     const sinH = Math.sin(this.physics.heading);
     const cosH = Math.cos(this.physics.heading);
     const backDist = this.cameraMode === 'far' ? 5.45 : 3.85;
@@ -959,6 +988,7 @@ export class GameEngine {
   public fastTravelTo(x: number, z: number): void {
     this.tireSmoke.clear();
     this.wasDriftSmokeActive = false;
+    this.continuousNoBrakeDriftSec = 0;
     this.skidmarks.clear();
     this.crashEffects.clear();
     this.crashFlash = 0;
@@ -1016,6 +1046,7 @@ export class GameEngine {
     this.physics = createInitialPhysicsStateAtS(st.s, 0);
     this.tireSmoke.clear();
     this.wasDriftSmokeActive = false;
+    this.continuousNoBrakeDriftSec = 0;
     this.skidmarks.clear();
     this.crashEffects.clear();
     this.crashFlash = 0;
@@ -1168,9 +1199,10 @@ export class GameEngine {
   }
 
   public cycleCamera(): void {
-    const order: CameraMode[] = ['chase', 'far', 'hood', 'bumper', 'cinematic'];
+    const order: CameraMode[] = ['chase', 'far', 'hood', 'cockpit', 'bumper', 'cinematic'];
     const next = order[(order.indexOf(this.cameraMode) + 1) % order.length];
     this.cameraMode = next;
+    this.emitTelemetry();
   }
 
   public toggleHeadlights(): void {
@@ -1649,6 +1681,8 @@ export class GameEngine {
         this.physics.z +
         leftZ +
         Math.cos(this.orbitYaw) * Math.cos(this.orbitPitch) * this.orbitDist;
+      this.camera.near = 0.2;
+      this.camera.up.copy(_worldUp);
       this.camera.position.lerp(_camTarget.set(cx, cy, cz), Math.min(1, dt * 8));
       this.camera.lookAt(
         this.physics.x + leftX,
@@ -1672,6 +1706,8 @@ export class GameEngine {
         surfaceAtCam + 0.3,
         this.physics.y + this.photoHeight + Math.sin(this.photoPitch) * this.photoDist,
       );
+      this.camera.near = 0.2;
+      this.camera.up.copy(_worldUp);
       this.camera.position.lerp(_camTarget.set(cx, cy, cz), Math.min(1, dt * 14));
       this.camera.lookAt(
         this.physics.x,
@@ -1837,6 +1873,20 @@ export class GameEngine {
         ? false
         : hlOn;
     this.playerCarRig.setLights(damagedFlicker, input.brake > 0.1, flameVisible);
+    this.playerCarRig.setCockpitState({
+      active: this.cameraMode === 'cockpit',
+      steerRad: this.physics.steerAngle,
+      rpm: this.physics.rpm,
+      maxRpm: this.physics.maxRpm,
+      speedKmh: this.physics.speedKmh,
+      gear: this.physics.gear,
+      nitro: this.physics.nitro,
+      nitroMax: 100 + this.currentCarData.upgrades.nitro * 25,
+      headlightsOn: damagedFlicker,
+      nitroActive: this.physics.nitroActive,
+      absActive: this.physics.absActive,
+      tcsActive: this.physics.tcsActive,
+    });
 
     // Dynamic Mud & Road Grime Accumulation during driving / free roam
     if (this.physics.speedKmh > 3) {
@@ -1986,6 +2036,31 @@ export class GameEngine {
     });
     this.skidmarks.update(this.physics, spec, input.handbrake, isBurnout);
 
+    // Track continuous drifting duration without pressing brake for Quest
+    const activelyDriftingNoBrake =
+      this.physics.grounded &&
+      input.brake <= 0.08 &&
+      (this.physics.isDrifting ||
+        (this.physics.driftAngleDeg >= 9 && this.physics.speedKmh > 16));
+    if (input.brake > 0.08 || !activelyDriftingNoBrake) {
+      this.continuousNoBrakeDriftSec = 0;
+    } else {
+      this.continuousNoBrakeDriftSec += dt;
+      const crossedTen =
+        this.continuousNoBrakeDriftSec >= 10 &&
+        this.bestNoBrakeDriftReported < 10;
+      const halfSecTick =
+        Math.floor(this.continuousNoBrakeDriftSec * 2) >
+        Math.floor(this.bestNoBrakeDriftReported * 2);
+      if (crossedTen || halfSecTick) {
+        this.bestNoBrakeDriftReported = Math.max(
+          this.bestNoBrakeDriftReported,
+          this.continuousNoBrakeDriftSec,
+        );
+        this.onNoBrakeDriftUpdate?.(this.continuousNoBrakeDriftSec);
+      }
+    }
+
     const driftAudioLevel = Math.max(
       this.physics.isDrifting ? Math.min(1, this.physics.driftAngleDeg / 38) : 0,
       input.handbrake && this.physics.speedKmh > 18 ? 0.55 : 0,
@@ -2093,6 +2168,69 @@ export class GameEngine {
   }
 
   private updateDrivingCamera(dt: number): void {
+    if (this.cameraMode === 'cockpit' && this.playerCarRig) {
+      this.playerCarRig.chassisGroup.updateMatrixWorld(true);
+      const chassisMat = this.playerCarRig.chassisGroup.matrixWorld;
+      const { eyeLocal, lookLocal } = this.playerCarRig.getCockpitAnchors();
+
+      // Subtle damped local-space driver head G-force lean & micro-vibration (never lags behind car)
+      const targetLeanX = THREE.MathUtils.clamp(-this.physics.lateralG * 0.012, -0.022, 0.022);
+      const targetBraceZ = THREE.MathUtils.clamp(-this.physics.longitudinalG * 0.008, -0.015, 0.015);
+      _cockpitHeadOffset.x = THREE.MathUtils.damp(_cockpitHeadOffset.x, targetLeanX, 8, dt);
+      _cockpitHeadOffset.z = THREE.MathUtils.damp(_cockpitHeadOffset.z, targetBraceZ, 9, dt);
+      _cockpitHeadOffset.y = 0;
+
+      if (this.cameraShakeIntensity > 0.005) {
+        const microShake = Math.min(0.022, this.cameraShakeIntensity * 0.06);
+        _cockpitHeadOffset.x += (Math.random() - 0.5) * microShake;
+        _cockpitHeadOffset.y += (Math.random() - 0.5) * microShake * 0.7;
+        this.cameraShakeIntensity *= Math.exp(-9 * dt);
+      }
+
+      _cockpitEyeWorld.copy(eyeLocal).add(_cockpitHeadOffset).applyMatrix4(chassisMat);
+      _cockpitLookWorld.copy(lookLocal).applyMatrix4(chassisMat);
+      _cockpitUpWorld.set(0, 1, 0).transformDirection(chassisMat).normalize();
+
+      this.camera.position.copy(_cockpitEyeWorld);
+      this.camera.up.copy(_cockpitUpWorld);
+      this.camera.lookAt(_cockpitLookWorld);
+
+      if (Math.abs(this.cameraCrashRoll) > 0.001) {
+        this.camera.rotateZ(THREE.MathUtils.clamp(this.cameraCrashRoll * 0.55, -0.1, 0.1));
+      }
+
+      const cockpitFov =
+        68 +
+        Math.min(6, this.physics.speedKmh * 0.018) +
+        (this.physics.nitroActive ? 5 : 0);
+      this.camera.near = 0.08;
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, cockpitFov, 7.5, dt);
+      this.camera.updateProjectionMatrix();
+
+      if (this.speedBlurPass) {
+        const speedNorm = THREE.MathUtils.clamp(
+          (this.physics.speedKmh - 105) / 230,
+          0,
+          1,
+        );
+        const targetBlur =
+          speedNorm * 0.18 +
+          (this.physics.nitroActive ? 0.14 : 0) +
+          this.crashFlash * 0.35;
+        const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
+        this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
+          curBlur,
+          targetBlur,
+          8,
+          dt,
+        );
+      }
+      return;
+    }
+
+    this.camera.near = 0.2;
+    this.camera.up.copy(_worldUp);
+
     const sinH = Math.sin(this.physics.heading);
     const cosH = Math.cos(this.physics.heading);
 
@@ -2137,6 +2275,7 @@ export class GameEngine {
       );
       this.camera.position.lerp(_camTarget, 1 - Math.exp(-5 * dt));
       this.camera.lookAt(this.physics.x, this.physics.y + 0.8, this.physics.z);
+      this.camera.updateProjectionMatrix();
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
       }
@@ -2324,6 +2463,7 @@ export class GameEngine {
       dirtLevel: this.carDirtLevel,
       damageLevel: this.physics.damageLevel,
       crashFlash: this.crashFlash,
+      noBrakeDriftSec: this.continuousNoBrakeDriftSec,
       opponents: this.trafficAI.racers.map((r) => ({
         x: r.x,
         z: r.z,

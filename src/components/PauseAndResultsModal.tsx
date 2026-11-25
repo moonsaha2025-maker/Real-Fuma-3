@@ -9,6 +9,7 @@ import {
   Play,
   Radio,
   RotateCcw,
+  ScrollText,
   Settings,
   Sun,
   Trophy,
@@ -47,6 +48,7 @@ interface PauseModalProps {
   onChangeRadioVolume: (volume: number) => void;
   onResume: () => void;
   onOpenPhotoMode: () => void;
+  onOpenQuests?: () => void;
   onRestart: () => void;
   onOpenMap: () => void;
   onOpenSettings: () => void;
@@ -69,6 +71,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onChangeRadioVolume,
   onResume,
   onOpenPhotoMode,
+  onOpenQuests,
   onRestart,
   onOpenMap,
   onOpenSettings,
@@ -296,6 +299,18 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             <RotateCcw className="w-4 h-4 text-rose-500" />
             RESTART SESSION
           </button>
+          {onOpenQuests && (
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenQuests();
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-violet-700/80 hover:bg-violet-600 text-white font-display font-bold tracking-wider text-xs py-2.5 cursor-pointer"
+            >
+              <ScrollText className="w-4 h-4" />
+              QUESTS &amp; FUMA SHARDS
+            </button>
+          )}
           <button
             onClick={() => {
               audioEngine.playUiClick();

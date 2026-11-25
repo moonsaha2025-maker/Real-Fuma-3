@@ -158,6 +158,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               </div>
             </div>
             <div>
+              <div className="text-[10px] font-display text-slate-400">FUMA SHARDS</div>
+              <div className="font-mono-num text-xl font-bold text-cyan-300 mt-1">
+                {save.fumaShards}
+              </div>
+            </div>
+            <div>
               <div className="text-[10px] font-display text-slate-400">GARAGE ASSET VALUE</div>
               <div className="font-mono-num text-xl font-bold text-emerald-400 mt-1">
                 ${garageValue.toLocaleString()}

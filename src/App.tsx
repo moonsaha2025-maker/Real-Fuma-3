@@ -13,6 +13,8 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { PauseModal, RaceResultsModal } from './components/PauseAndResultsModal';
 import { PhotoModeOverlay } from './components/PhotoModeOverlay';
 import { ProfileModal } from './components/ProfileModal';
+import { QuestId, RaceEvent, RaceResultSummary, ScreenState, TimeOfDay, WeatherType, ControlInputState, ControlScheme, LiveTelemetry, MapLandmark, OwnedCarData } from './types/game';
+import { QuestsModal } from './components/QuestsModal';
 import { QuickRaceModal } from './components/QuickRaceModal';
 import { SettingsModal } from './components/SettingsModal';
 import { WorldMapModal } from './components/WorldMapModal';
@@ -22,18 +24,6 @@ import { REGIONS } from './data/world';
 import { audioEngine } from './engine/audio';
 import { DRIVE_SPAWN_S, GameEngine } from './engine/GameEngine';
 import { useGameStore } from './state/useGameStore';
-import {
-  ControlInputState,
-  ControlScheme,
-  LiveTelemetry,
-  MapLandmark,
-  OwnedCarData,
-  RaceEvent,
-  RaceResultSummary,
-  ScreenState,
-  TimeOfDay,
-  WeatherType,
-} from './types/game';
 
 const INITIAL_PT = getRoadPointAt(DRIVE_SPAWN_S, 0);
 
@@ -78,6 +68,7 @@ const INITIAL_TELEMETRY: LiveTelemetry = {
   dirtLevel: 0,
   damageLevel: 0,
   crashFlash: 0,
+  noBrakeDriftSec: 0,
   opponents: [],
 };
 
@@ -96,6 +87,10 @@ export default function App() {
     unlockRegion,
     recordRaceResult,
     addFreeRoamRewards,
+    recordNoBrakeDriftSec,
+    updateContinuousPlaySec,
+    claimQuestReward,
+    claimDailyLoginPrize,
     resetProgress,
   } = useGameStore();
 
@@ -103,6 +98,8 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [photoMode, setPhotoMode] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
+  const [showPauseQuests, setShowPauseQuests] = useState(false);
+  const [sessionPlaySec, setSessionPlaySec] = useState(0);
   const [telemetry, setTelemetry] = useState<LiveTelemetry>(INITIAL_TELEMETRY);
   const [raceResult, setRaceResult] = useState<RaceResultSummary | null>(null);
   const [isWashingCar, setIsWashingCar] = useState(false);
@@ -126,18 +123,33 @@ export default function App() {
     addFreeRoamRewards,
     unlockRegion,
     setCarDirtLevel,
+    recordNoBrakeDriftSec,
   });
   callbacksRef.current = {
     recordRaceResult,
     addFreeRoamRewards,
     unlockRegion,
     setCarDirtLevel,
+    recordNoBrakeDriftSec,
   };
 
   const notify = useCallback((msg: string) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 2400);
   }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setSessionPlaySec((prev) => {
+        const next = prev + 1;
+        if (next % 5 === 0 || next === 10800) {
+          updateContinuousPlaySec(next);
+        }
+        return next;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [updateContinuousPlaySec]);
 
   useEffect(() => {
     const container = canvasContainerRef.current;
@@ -167,6 +179,9 @@ export default function App() {
       },
       onWashComplete: () => {
         setIsWashingCar(false);
+      },
+      onNoBrakeDriftUpdate: (sec) => {
+        callbacksRef.current.recordNoBrakeDriftSec(sec);
       },
     });
     engineRef.current = engine;
@@ -291,6 +306,10 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'Escape') {
+        if (showPauseQuests) {
+          setShowPauseQuests(false);
+          return;
+        }
         if (showWorldMap) {
           setShowWorldMap(false);
           return;
@@ -310,10 +329,11 @@ export default function App() {
         screen === 'playing' &&
         !raceResult &&
         !showWorldMap &&
+        !showPauseQuests &&
         !photoMode
       ) {
         enterPhotoMode();
-      } else if (e.code === 'KeyM' && screen === 'playing' && !raceResult && !photoMode) {
+      } else if (e.code === 'KeyM' && screen === 'playing' && !raceResult && !photoMode && !showPauseQuests) {
         setShowWorldMap((prev) => !prev);
       } else if (e.code === 'Enter' && screen === 'main_menu' && !showWorldMap) {
         startFreeRoam();
@@ -321,7 +341,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [screen, showWorldMap, raceResult, photoMode, startFreeRoam, enterPhotoMode]);
+  }, [screen, showWorldMap, showPauseQuests, raceResult, photoMode, startFreeRoam, enterPhotoMode]);
 
   const isShowcaseScreen =
     screen === 'main_menu' ||
@@ -428,6 +448,21 @@ export default function App() {
         <MainMenu
           save={save}
           activeCar={activeCarData}
+          sessionPlaySec={sessionPlaySec}
+          onClaimQuest={(qId) => {
+            const shards = claimQuestReward(qId, sessionPlaySec);
+            if (shards > 0) {
+              notify(`Quest Claimed! +${shards} Fuma Shards`);
+            }
+          }}
+          onClaimDaily={() => {
+            const tier = claimDailyLoginPrize();
+            if (tier) {
+              notify(
+                `Day ${tier.day} Prize! +$${tier.cash.toLocaleString()} & +${tier.shards} Shards`,
+              );
+            }
+          }}
           onNavigate={(target) => {
             if (
               target === 'garage' ||
@@ -564,6 +599,7 @@ export default function App() {
             engineRef.current?.setPaused(false);
           }}
           onOpenPhotoMode={enterPhotoMode}
+          onOpenQuests={() => setShowPauseQuests(true)}
           onRestart={() => {
             if (activeRaceConfig) {
               startRaceEvent(
@@ -633,6 +669,19 @@ export default function App() {
             notify('Fast Travel Complete');
           }}
           onLaunchEvent={(evt) => startRaceEvent(evt)}
+        />
+      )}
+      {showPauseQuests && (
+        <QuestsModal
+          save={save}
+          sessionPlaySec={sessionPlaySec}
+          onClaimQuest={(qId: QuestId) => {
+            const shards = claimQuestReward(qId, sessionPlaySec);
+            if (shards > 0) {
+              notify(`Quest Claimed! +${shards} Fuma Shards`);
+            }
+          }}
+          onClose={() => setShowPauseQuests(false)}
         />
       )}
     </div>

@@ -119,3 +119,30 @@
   }
 }
 
+@keyframes hudDamageRedFlash {
+  0%,
+  100% {
+    background-color: rgba(127, 29, 29, 0.72);
+    border-color: rgba(248, 113, 113, 0.95);
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.55);
+  }
+  50% {
+    background-color: rgba(220, 38, 38, 0.88);
+    border-color: rgba(254, 202, 202, 1);
+    box-shadow: 0 0 26px rgba(248, 113, 113, 0.9);
+  }
+}
+
+.hud-damage-critical {
+  animation: hudDamageRedFlash 0.65s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-damage-critical {
+    animation: none;
+    background-color: rgba(153, 27, 27, 0.82);
+    border-color: rgba(248, 113, 113, 0.95);
+  }
+}
+
+

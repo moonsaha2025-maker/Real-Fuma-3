@@ -10,7 +10,7 @@ export type ControlScheme = 'buttons' | 'wheel' | 'tilt' | 'keyboard';
 
 export type TransmissionMode = 'auto' | 'manual';
 
-export type CameraMode = 'chase' | 'far' | 'hood' | 'bumper' | 'cinematic';
+export type CameraMode = 'chase' | 'far' | 'hood' | 'cockpit' | 'bumper' | 'cinematic';
 
 export type WeatherType =
   | 'sunny'
@@ -212,11 +212,46 @@ export interface LeaderboardEntry {
   isPlayer?: boolean;
 }
 
+export type QuestId =
+  | 'drift_10s_no_brake'
+  | 'earn_120k'
+  | 'buy_all_cars'
+  | 'collect_50_shards'
+  | 'upgrade_all_cars_max'
+  | 'play_3h_continuous';
+
+export interface QuestDefinition {
+  id: QuestId;
+  title: string;
+  description: string;
+  rewardShards: number;
+  target: number;
+}
+
+export interface DailyLoginState {
+  lastClaimDate: string | null;
+  streakDay: number;
+}
+
+export interface DailyPrizeTier {
+  day: number;
+  cash: number;
+  shards: number;
+  label: string;
+}
+
 export interface PlayerSaveData {
   driverName: string;
   driverAge?: number;
   onboarded?: boolean;
   money: number;
+  fumaShards: number;
+  totalFumaShardsCollected: number;
+  totalCashEarned: number;
+  bestNoBrakeDriftSec: number;
+  bestContinuousPlaySec: number;
+  claimedQuests: QuestId[];
+  dailyLogin: DailyLoginState;
   xp: number;
   reputation: number;
   rank: CareerRankId;
@@ -278,6 +313,7 @@ export interface LiveTelemetry {
   dirtLevel: number;
   damageLevel: number;
   crashFlash: number;
+  noBrakeDriftSec: number;
   opponents: Array<{ x: number; z: number; name: string }>;
 }
 

@@ -1,21 +1,30 @@
 import React, { useState } from 'react';
 import {
   Car,
+  Gem,
+  Gift,
   Home,
   MapPin,
+  ScrollText,
   Settings,
   Trophy,
   User,
   Users,
 } from 'lucide-react';
 import { getCarSpec, RANK_ORDER } from '../data/cars';
+import { computeQuestStatuses, getDailyLoginStatus } from '../data/quests';
 import { audioEngine } from '../engine/audio';
-import { OwnedCarData, PlayerSaveData, ScreenState } from '../types/game';
+import { OwnedCarData, PlayerSaveData, QuestId, ScreenState } from '../types/game';
 import { CreditsModal } from './CreditsModal';
+import { DailyLoginModal } from './DailyLoginModal';
+import { QuestsModal } from './QuestsModal';
 
 interface MainMenuProps {
   save: PlayerSaveData;
   activeCar: OwnedCarData;
+  sessionPlaySec: number;
+  onClaimQuest: (questId: QuestId) => void;
+  onClaimDaily: () => void;
   onNavigate: (screen: ScreenState) => void;
   onPlayFreeRoam: () => void;
   onOpenWorldMap: () => void;
@@ -30,15 +39,27 @@ const STRIPED_TEXTURE =
 export const MainMenu: React.FC<MainMenuProps> = ({
   save,
   activeCar,
+  sessionPlaySec,
+  onClaimQuest,
+  onClaimDaily,
   onNavigate,
   onPlayFreeRoam,
   onOpenWorldMap,
 }) => {
   const [showCredits, setShowCredits] = useState(false);
+  const [showQuests, setShowQuests] = useState(false);
+  const [showDaily, setShowDaily] = useState(false);
 
   const spec = getCarSpec(activeCar.carId);
   const rankLevel = Math.max(1, RANK_ORDER.indexOf(save.rank) + 1);
   const ownedCarCount = Object.keys(save.ownedCars).length;
+  const questStatuses = computeQuestStatuses(save, sessionPlaySec);
+  const claimableQuests = questStatuses.filter(
+    (q) => q.completed && !q.claimed,
+  ).length;
+  const dailyStatus = getDailyLoginStatus(
+    save.dailyLogin ?? { lastClaimDate: null, streakDay: 0 },
+  );
 
   const handleClick = (fn: () => void) => {
     audioEngine.init();
@@ -104,15 +125,63 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </span>
           </button>
 
-          <button
-            onClick={() => handleClick(() => onNavigate('dealership'))}
-            className="bg-[#0e1018]/92 hover:bg-[#171a26] border border-white/12 rounded-full px-5 py-1.5 shadow-xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 min-h-[40px] flex items-center"
-            title="Visit Dealership"
-          >
-            <span className="font-mono-num text-sm sm:text-base font-bold text-[#fbbf24] tracking-wide tabular-nums whitespace-nowrap">
-              ${save.money.toLocaleString()}
-            </span>
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* Daily Login Prizes Trigger */}
+            <button
+              onClick={() => handleClick(() => setShowDaily(true))}
+              className={`border rounded-full px-3.5 py-1.5 shadow-xl transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5 text-xs font-display italic font-bold tracking-wider whitespace-nowrap ${
+                dailyStatus.canClaimToday
+                  ? 'bg-gradient-to-r from-[#f59e0b] to-[#ea580c] border-amber-300 text-[#090b10]'
+                  : 'bg-[#0e1018]/92 hover:bg-[#171a26] border-white/12 text-slate-200'
+              }`}
+              title="Daily Login Prizes"
+            >
+              <Gift className="w-3.5 h-3.5 shrink-0" />
+              <span>{dailyStatus.canClaimToday ? 'DAILY GIFT!' : 'DAILY'}</span>
+            </button>
+
+            {/* Quests Modal Trigger */}
+            <button
+              onClick={() => handleClick(() => setShowQuests(true))}
+              className={`border rounded-full px-3.5 py-1.5 shadow-xl transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5 text-xs font-display italic font-bold tracking-wider whitespace-nowrap ${
+                claimableQuests > 0
+                  ? 'bg-gradient-to-r from-[#6d28d9] to-[#db2777] border-white/60 text-white'
+                  : 'bg-[#0e1018]/92 hover:bg-[#171a26] border-white/12 text-slate-200'
+              }`}
+              title="Open Quests"
+            >
+              <ScrollText className="w-3.5 h-3.5 shrink-0" />
+              <span>QUESTS</span>
+              {claimableQuests > 0 && (
+                <span className="bg-white text-[#0b0c12] font-mono-num text-[10px] font-bold px-1.5 py-0.2 rounded-full tabular-nums">
+                  {claimableQuests}
+                </span>
+              )}
+            </button>
+
+            {/* Fuma Shards Capsule */}
+            <button
+              onClick={() => handleClick(() => setShowQuests(true))}
+              className="bg-[#0e1018]/92 hover:bg-[#171a26] border border-cyan-400/25 rounded-full px-3.5 py-1.5 shadow-xl transition-colors cursor-pointer min-h-[40px] flex items-center gap-1.5"
+              title="Fuma Shards (Earn via Quests & Daily Login)"
+            >
+              <Gem className="w-4 h-4 text-cyan-300 shrink-0" />
+              <span className="font-mono-num text-sm font-bold text-cyan-200 tabular-nums whitespace-nowrap">
+                {save.fumaShards}
+              </span>
+            </button>
+
+            {/* Cash Capsule */}
+            <button
+              onClick={() => handleClick(() => onNavigate('dealership'))}
+              className="bg-[#0e1018]/92 hover:bg-[#171a26] border border-white/12 rounded-full px-4 sm:px-5 py-1.5 shadow-xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 min-h-[40px] flex items-center"
+              title="Visit Dealership"
+            >
+              <span className="font-mono-num text-sm sm:text-base font-bold text-[#fbbf24] tracking-wide tabular-nums whitespace-nowrap">
+                ${save.money.toLocaleString()}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Middle & Lower Split: Left Stacked Mode Cards + Bottom-Right START RACE CTA */}
@@ -300,6 +369,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </nav>
 
       {showCredits && <CreditsModal onClose={() => setShowCredits(false)} />}
+      {showQuests && (
+        <QuestsModal
+          save={save}
+          sessionPlaySec={sessionPlaySec}
+          onClaimQuest={onClaimQuest}
+          onClose={() => setShowQuests(false)}
+        />
+      )}
+      {showDaily && (
+        <DailyLoginModal
+          dailyLogin={save.dailyLogin ?? { lastClaimDate: null, streakDay: 0 }}
+          onClaimDaily={onClaimDaily}
+          onClose={() => setShowDaily(false)}
+        />
+      )}
     </div>
   );
 };

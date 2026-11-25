@@ -264,6 +264,33 @@ export const GameHUD: React.FC<GameHUDProps> = ({
 
   const showTouchControls = settings.controlScheme !== 'keyboard';
 
+  const dmg = Math.max(0, Math.min(1, telemetry.damageLevel));
+  const dmgPct = Math.round(dmg * 100);
+  const flash = Math.max(0, Math.min(1, telemetry.crashFlash));
+  const isImpacting = flash > 0.08;
+  const isSignificantDamage = dmg >= 0.45;
+  const isModerateDamage = dmg >= 0.22 && dmg < 0.45;
+
+  // Dynamic chassis SVG vertex deformation based on accumulated damage & live crash jolt
+  const bend = dmg * 6.5 + flash * 3.8;
+  const skewDeg = (isImpacting ? (flash * 9 - 2) : 0) + (dmg >= 0.45 ? dmg * 3.2 : 0);
+  const scaleBump = isImpacting ? 1 + flash * 0.08 : 1;
+  const frontInset = (dmg * 5.2 + flash * 2.5).toFixed(1);
+  const leftBuckle = (9 + dmg * 4.5).toFixed(1);
+  const rightBuckle = (39 - dmg * 4.2).toFixed(1);
+  const dmgStroke =
+    isImpacting || isSignificantDamage
+      ? '#fca5a5'
+      : isModerateDamage
+        ? '#fbbf24'
+        : '#a7f3d0';
+  const dmgFill =
+    isImpacting || isSignificantDamage
+      ? 'rgba(239, 68, 68, 0.35)'
+      : isModerateDamage
+        ? 'rgba(245, 158, 11, 0.25)'
+        : 'rgba(16, 185, 129, 0.16)';
+
   return (
     <div
       className="fixed inset-0 z-20 pointer-events-none flex flex-col justify-between p-2.5 md:p-4 touch-none-game select-none"
@@ -280,10 +307,10 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           }}
         />
       )}
-      {/* TOP BAR: Compact Translucent Radar Minimap + Top-Left FPS Meter + Race Status + Edge Buttons */}
+      {/* TOP BAR: Compact Translucent Radar Minimap + Top-Left FPS & Damage Indicator + Race Status */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-1.5">
-          <div className="relative w-20 h-20 md:w-24 md:h-24 bg-black/35 border border-white/15 overflow-hidden">
+          <div className="relative w-20 h-20 md:w-24 md:h-24 bg-black/35 border border-white/15 overflow-hidden shrink-0">
             <svg viewBox="-210 -210 420 420" className="w-full h-full">
               <g
                 transform={`rotate(${
@@ -319,24 +346,114 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </div>
           </div>
 
-          <div
-            aria-label="Frame rate meter"
-            className="bg-black/45 border border-white/15 px-2 py-1 flex items-baseline gap-1"
-          >
-            <span
-              className={`font-mono-num text-xs font-bold tabular-nums leading-none ${
-                telemetry.fps >= 50
-                  ? 'text-emerald-400'
-                  : telemetry.fps >= 30
-                    ? 'text-amber-300'
-                    : 'text-rose-400'
-              }`}
+          <div className="flex flex-col gap-1.5">
+            <div
+              aria-label="Frame rate meter"
+              className="bg-black/45 border border-white/15 px-2 py-1 flex items-baseline justify-between gap-1.5"
             >
-              {telemetry.fps}
-            </span>
-            <span className="text-[8px] font-display tracking-wider text-white/60">
-              FPS
-            </span>
+              <span
+                className={`font-mono-num text-xs font-bold tabular-nums leading-none ${
+                  telemetry.fps >= 50
+                    ? 'text-emerald-400'
+                    : telemetry.fps >= 30
+                      ? 'text-amber-300'
+                      : 'text-rose-400'
+                }`}
+              >
+                {telemetry.fps}
+              </span>
+              <span className="text-[8px] font-display tracking-wider text-white/60">
+                FPS
+              </span>
+            </div>
+
+            {/* Dynamic Chassis Damage Indicator (deforms & flashes red on heavy crash/damage) */}
+            <div
+              role="status"
+              aria-label={`Vehicle damage ${dmgPct} percent`}
+              className={`border px-2 py-1 flex items-center gap-2 transition-colors duration-150 ${
+                isImpacting
+                  ? 'bg-rose-600/85 border-rose-200 shadow-[0_0_22px_rgba(244,63,94,0.85)]'
+                  : isSignificantDamage
+                    ? 'hud-damage-critical'
+                    : isModerateDamage
+                      ? 'bg-amber-950/60 border-amber-400/70'
+                      : 'bg-black/45 border-white/15'
+              }`}
+              style={{
+                transform: `skewX(${(-skewDeg).toFixed(1)}deg) scale(${scaleBump.toFixed(3)})`,
+              }}
+            >
+              <svg
+                viewBox="0 0 48 64"
+                className="w-6 h-8 shrink-0 overflow-visible"
+                aria-hidden="true"
+              >
+                {/* Dynamic deforming top-down chassis outline */}
+                <path
+                  d={`M 14 ${6 + Number(frontInset)} L 34 ${6 + Number(frontInset) * 0.7} L ${rightBuckle} 20 L 40 44 L 35 58 L 13 58 L 8 44 L ${leftBuckle} 20 Z`}
+                  fill={dmgFill}
+                  stroke={dmgStroke}
+                  strokeWidth={isSignificantDamage || isImpacting ? 2.5 : 2}
+                  strokeLinejoin="round"
+                />
+                {/* Windshield & Cabin */}
+                <path
+                  d={`M 15 ${(20 + bend * 0.35).toFixed(1)} L 33 ${(20 + bend * 0.25).toFixed(1)} L 31 37 L 17 37 Z`}
+                  fill="rgba(15,23,42,0.75)"
+                  stroke={dmgStroke}
+                  strokeWidth={1.2}
+                />
+                {/* Structural fracture lines appear when car sustains moderate/significant damage */}
+                {(dmg >= 0.28 || isImpacting) && (
+                  <path
+                    d={`M 18 11 L 24 18 L 20 26 M 32 13 L 27 21`}
+                    fill="none"
+                    stroke="#fecaca"
+                    strokeWidth={1.4}
+                    strokeLinecap="round"
+                  />
+                )}
+                {dmg >= 0.55 && (
+                  <path
+                    d={`M 10 30 L 17 34 L 13 43 M 38 33 L 31 39`}
+                    fill="none"
+                    stroke="#f87171"
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                  />
+                )}
+              </svg>
+
+              <div className="leading-tight">
+                <div
+                  className={`text-[8px] font-display font-bold tracking-wider uppercase ${
+                    isImpacting || isSignificantDamage
+                      ? 'text-rose-100'
+                      : isModerateDamage
+                        ? 'text-amber-300'
+                        : 'text-white/65'
+                  }`}
+                >
+                  {isImpacting
+                    ? 'IMPACT!'
+                    : isSignificantDamage
+                      ? 'CRITICAL'
+                      : 'DMG'}
+                </div>
+                <div
+                  className={`font-mono-num text-xs font-bold tabular-nums leading-none mt-0.5 ${
+                    isImpacting || isSignificantDamage
+                      ? 'text-white'
+                      : isModerateDamage
+                        ? 'text-amber-200'
+                        : 'text-emerald-300'
+                  }`}
+                >
+                  {dmgPct}%
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -365,6 +482,20 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           {telemetry.isDrifting && (
             <div className="bg-amber-500/85 text-black font-display font-bold px-3 py-0.5 text-[11px] tracking-wider tabular-nums">
               DRIFT +{telemetry.currentDriftPoints.toLocaleString()}
+            </div>
+          )}
+
+          {telemetry.noBrakeDriftSec >= 0.4 && (
+            <div
+              className={`px-2.5 py-0.5 text-[10px] font-mono-num font-bold tracking-wider tabular-nums border ${
+                telemetry.noBrakeDriftSec >= 10
+                  ? 'bg-emerald-950/90 border-emerald-400 text-emerald-300'
+                  : 'bg-black/60 border-cyan-400/50 text-cyan-200'
+              }`}
+            >
+              {telemetry.noBrakeDriftSec >= 10
+                ? `NO-BRAKE DRIFT ${telemetry.noBrakeDriftSec.toFixed(1)}s · QUEST COMPLETE`
+                : `NO-BRAKE DRIFT ${telemetry.noBrakeDriftSec.toFixed(1)}s / 10.0s`}
             </div>
           )}
         </div>
@@ -397,9 +528,12 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             onClick={onCycleCamera}
             title={`Camera (${telemetry.cameraMode}) [C]`}
             aria-label="Switch Camera"
-            className="w-8 h-8 md:w-9 md:h-9 bg-black/35 hover:bg-black/55 border border-white/15 text-white/90 flex items-center justify-center cursor-pointer"
+            className="h-8 md:h-9 px-2 bg-black/40 hover:bg-black/60 border border-white/15 text-white/90 flex items-center gap-1 cursor-pointer"
           >
-            <Camera className="w-3.5 h-3.5" />
+            <Camera className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[9px] font-display font-bold tracking-wider uppercase">
+              {telemetry.cameraMode}
+            </span>
           </button>
           <button
             type="button"

@@ -8,14 +8,24 @@ import {
   RANK_ORDER,
   UPGRADE_COSTS,
 } from '../data/cars';
+import {
+  computeQuestStatuses,
+  DAILY_LOGIN_PRIZES,
+  formatLocalDateKey,
+  getDailyLoginStatus,
+  STARTING_FUMA_SHARDS,
+  STARTING_MONEY,
+} from '../data/quests';
 import { ACHIEVEMENTS_LIST, DEFAULT_LEADERBOARD, REGIONS } from '../data/world';
 import {
   CarCustomization,
   CarUpgrades,
   CareerRankId,
+  DailyPrizeTier,
   GameSettings,
   OwnedCarData,
   PlayerSaveData,
+  QuestId,
   RaceResultSummary,
   RegionId,
 } from '../types/game';
@@ -50,7 +60,17 @@ function createInitialSaveData(): PlayerSaveData {
     driverName: 'FUMA_RACER',
     driverAge: undefined,
     onboarded: false,
-    money: 60000,
+    money: STARTING_MONEY,
+    fumaShards: STARTING_FUMA_SHARDS,
+    totalFumaShardsCollected: STARTING_FUMA_SHARDS,
+    totalCashEarned: 0,
+    bestNoBrakeDriftSec: 0,
+    bestContinuousPlaySec: 0,
+    claimedQuests: [],
+    dailyLogin: {
+      lastClaimDate: null,
+      streakDay: 0,
+    },
     xp: 0,
     reputation: 0,
     rank: 'rookie',
@@ -116,6 +136,31 @@ function loadSaveData(): PlayerSaveData {
       ...parsed,
       activeCarId,
       ownedCars,
+      fumaShards:
+        typeof parsed.fumaShards === 'number'
+          ? parsed.fumaShards
+          : base.fumaShards,
+      totalFumaShardsCollected:
+        typeof parsed.totalFumaShardsCollected === 'number'
+          ? parsed.totalFumaShardsCollected
+          : Math.max(base.totalFumaShardsCollected, parsed.fumaShards ?? 0),
+      totalCashEarned:
+        typeof parsed.totalCashEarned === 'number' ? parsed.totalCashEarned : 0,
+      bestNoBrakeDriftSec:
+        typeof parsed.bestNoBrakeDriftSec === 'number'
+          ? parsed.bestNoBrakeDriftSec
+          : 0,
+      bestContinuousPlaySec:
+        typeof parsed.bestContinuousPlaySec === 'number'
+          ? parsed.bestContinuousPlaySec
+          : 0,
+      claimedQuests: Array.isArray(parsed.claimedQuests)
+        ? parsed.claimedQuests
+        : [],
+      dailyLogin: {
+        ...base.dailyLogin,
+        ...(parsed.dailyLogin ?? {}),
+      },
       unlockedRegions:
         parsedRegions.length > 0 ? parsedRegions : base.unlockedRegions,
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
@@ -219,6 +264,7 @@ export function useGameStore() {
       return {
         ...prev,
         money: prev.money - spec.price + bonusCash,
+        totalCashEarned: prev.totalCashEarned + bonusCash,
         activeCarId: carId,
         ownedCars: { ...prev.ownedCars, [carId]: newOwned },
         achievements: newAchievements,
@@ -309,6 +355,7 @@ export function useGameStore() {
       return {
         ...prev,
         money: prev.money + bonus,
+        totalCashEarned: prev.totalCashEarned + bonus,
         unlockedRegions: unlocked,
         achievements: newAch,
       };
@@ -365,6 +412,7 @@ export function useGameStore() {
       return {
         ...prev,
         money: prev.money + summary.cashEarned + achBonus,
+        totalCashEarned: prev.totalCashEarned + summary.cashEarned + achBonus,
         xp: nextXp,
         reputation: nextRep,
         rank: nextRank,
@@ -400,6 +448,7 @@ export function useGameStore() {
         return {
           ...prev,
           money: prev.money + cash,
+          totalCashEarned: prev.totalCashEarned + cash,
           xp: nextXp,
           reputation: nextRep,
           rank: nextRank,
@@ -424,6 +473,71 @@ export function useGameStore() {
     [],
   );
 
+  const recordNoBrakeDriftSec = useCallback((sec: number) => {
+    if (!Number.isFinite(sec) || sec <= 0) return;
+    setSave((prev) => {
+      if (sec <= (prev.bestNoBrakeDriftSec ?? 0)) return prev;
+      return { ...prev, bestNoBrakeDriftSec: Math.round(sec * 10) / 10 };
+    });
+  }, []);
+
+  const updateContinuousPlaySec = useCallback((sessionSec: number) => {
+    if (!Number.isFinite(sessionSec) || sessionSec <= 0) return;
+    setSave((prev) => {
+      if (sessionSec <= (prev.bestContinuousPlaySec ?? 0)) return prev;
+      return { ...prev, bestContinuousPlaySec: Math.floor(sessionSec) };
+    });
+  }, []);
+
+  const claimQuestReward = useCallback(
+    (questId: QuestId, sessionPlaySec = 0): number => {
+      let awarded = 0;
+      setSave((prev) => {
+        if ((prev.claimedQuests ?? []).includes(questId)) return prev;
+        const statuses = computeQuestStatuses(prev, sessionPlaySec);
+        const item = statuses.find((s) => s.quest.id === questId);
+        if (!item || !item.completed || item.claimed) return prev;
+        awarded = item.quest.rewardShards;
+        return {
+          ...prev,
+          fumaShards: (prev.fumaShards ?? 0) + awarded,
+          totalFumaShardsCollected:
+            (prev.totalFumaShardsCollected ?? 0) + awarded,
+          claimedQuests: [...(prev.claimedQuests ?? []), questId],
+        };
+      });
+      return awarded;
+    },
+    [],
+  );
+
+  const claimDailyLoginPrize = useCallback((): DailyPrizeTier | null => {
+    let claimedTier: DailyPrizeTier | null = null;
+    setSave((prev) => {
+      const status = getDailyLoginStatus(
+        prev.dailyLogin ?? { lastClaimDate: null, streakDay: 0 },
+      );
+      if (!status.canClaimToday) return prev;
+      const tier =
+        DAILY_LOGIN_PRIZES.find((t) => t.day === status.claimableDay) ??
+        DAILY_LOGIN_PRIZES[0];
+      claimedTier = tier;
+      return {
+        ...prev,
+        money: prev.money + tier.cash,
+        totalCashEarned: (prev.totalCashEarned ?? 0) + tier.cash,
+        fumaShards: (prev.fumaShards ?? 0) + tier.shards,
+        totalFumaShardsCollected:
+          (prev.totalFumaShardsCollected ?? 0) + tier.shards,
+        dailyLogin: {
+          lastClaimDate: formatLocalDateKey(),
+          streakDay: tier.day,
+        },
+      };
+    });
+    return claimedTier;
+  }, []);
+
   const resetProgress = useCallback(() => {
     const fresh = createInitialSaveData();
     setSave(fresh);
@@ -447,6 +561,10 @@ export function useGameStore() {
     unlockRegion,
     recordRaceResult,
     addFreeRoamRewards,
+    recordNoBrakeDriftSec,
+    updateContinuousPlaySec,
+    claimQuestReward,
+    claimDailyLoginPrize,
     resetProgress,
   };
 }
