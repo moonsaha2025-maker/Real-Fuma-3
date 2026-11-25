@@ -48,6 +48,8 @@ function createInitialSaveData(): PlayerSaveData {
   const starter = CAR_CATALOG[0]; // Woking 765LT Spider (Coastal Blue #0284c7)
   return {
     driverName: 'FUMA_RACER',
+    driverAge: undefined,
+    onboarded: false,
     money: 60000,
     xp: 0,
     reputation: 0,
@@ -160,6 +162,17 @@ export function useGameStore() {
   const setDriverName = useCallback((name: string) => {
     const clean = name.trim().slice(0, 18) || 'FUMA_RACER';
     setSave((prev) => ({ ...prev, driverName: clean }));
+  }, []);
+
+  const completeOnboarding = useCallback((username: string, age: number) => {
+    const cleanName = username.trim().slice(0, 18) || 'FUMA_RACER';
+    const cleanAge = Math.max(6, Math.min(120, Math.round(age)));
+    setSave((prev) => ({
+      ...prev,
+      driverName: cleanName,
+      driverAge: cleanAge,
+      onboarded: true,
+    }));
   }, []);
 
   const selectCar = useCallback((carId: string) => {
@@ -425,6 +438,7 @@ export function useGameStore() {
     activeCarData,
     updateSettings,
     setDriverName,
+    completeOnboarding,
     selectCar,
     buyCar,
     updateCarCustomization,

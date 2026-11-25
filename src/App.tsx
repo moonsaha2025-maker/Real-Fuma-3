@@ -9,6 +9,7 @@ import { GameHUD } from './components/GameHUD';
 import { GarageDealership } from './components/GarageDealership';
 import { LoadingScreen } from './components/LoadingScreen';
 import { MainMenu } from './components/MainMenu';
+import { OnboardingModal } from './components/OnboardingModal';
 import { PauseModal, RaceResultsModal } from './components/PauseAndResultsModal';
 import { PhotoModeOverlay } from './components/PhotoModeOverlay';
 import { ProfileModal } from './components/ProfileModal';
@@ -86,6 +87,7 @@ export default function App() {
     activeCarData,
     updateSettings,
     setDriverName,
+    completeOnboarding,
     selectCar,
     buyCar,
     updateCarCustomization,
@@ -406,6 +408,17 @@ export default function App() {
           radioStation={save.settings.radioStation}
           onReady={() => {
             engineRef.current?.setShowcaseMode(true);
+            setScreen(save.onboarded ? 'main_menu' : 'onboarding');
+          }}
+        />
+      )}
+
+      {screen === 'onboarding' && (
+        <OnboardingModal
+          initialName={save.driverName}
+          onComplete={(username, age) => {
+            completeOnboarding(username, age);
+            engineRef.current?.setShowcaseMode(true);
             setScreen('main_menu');
           }}
         />
@@ -488,6 +501,7 @@ export default function App() {
           onResetSave={() => {
             resetProgress();
             notify('Career Save Reset');
+            setScreen('onboarding');
           }}
           onBack={enterMainMenu}
         />

@@ -52,6 +52,7 @@ export type CareerRankId =
 
 export type ScreenState =
   | 'loading'
+  | 'onboarding'
   | 'main_menu'
   | 'playing'
   | 'garage'
@@ -213,6 +214,8 @@ export interface LeaderboardEntry {
 
 export interface PlayerSaveData {
   driverName: string;
+  driverAge?: number;
+  onboarded?: boolean;
   money: number;
   xp: number;
   reputation: number;

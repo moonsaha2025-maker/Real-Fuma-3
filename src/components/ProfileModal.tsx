@@ -64,6 +64,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 <div className="font-display text-lg font-bold text-slate-100">
                   {save.driverName}
                 </div>
+                {save.driverAge !== undefined && (
+                  <div className="text-[11px] font-mono-num text-slate-400">
+                    Age {save.driverAge}
+                  </div>
+                )}
               </div>
             </div>
 
