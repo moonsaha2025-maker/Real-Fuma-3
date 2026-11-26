@@ -5,7 +5,7 @@ import { VehiclePhysicsState } from './physics';
 const RAIN_COUNT = 2200;
 const SPLASH_COUNT = 220;
 const SPRAY_COUNT = 280;
-const FOG_BANK_COUNT = 44;
+const FOG_BANK_COUNT = 84;
 
 const _carFwd = new THREE.Vector3();
 const _carRight = new THREE.Vector3();
@@ -323,14 +323,14 @@ export class WeatherEffectsSystem {
     this.sprayPoints.renderOrder = 7;
     this.group.add(this.sprayPoints);
 
-    // --- 4. Drifting Ground-Hugging Volumetric Fog & Mist Banks ---
+    // --- 4. Drifting Volumetric Ground Fog & Mist Banks ---
     for (let i = 0; i < FOG_BANK_COUNT; i++) {
-      const ang = (i / FOG_BANK_COUNT) * Math.PI * 2 + Math.random() * 0.35;
-      const dist = 16 + Math.pow(Math.random(), 0.7) * 140;
+      const ang = (i / FOG_BANK_COUNT) * Math.PI * 2 + Math.random() * 0.45;
+      const dist = 14 + Math.pow(Math.random(), 0.72) * 150;
       this.fogOffset[i * 3] = Math.cos(ang) * dist;
-      this.fogOffset[i * 3 + 1] = 0.6 + Math.random() * 5.8;
+      this.fogOffset[i * 3 + 1] = -0.8 + Math.random() * 6.8;
       this.fogOffset[i * 3 + 2] = Math.sin(ang) * dist;
-      this.fogSize[i] = 18 + Math.random() * 26;
+      this.fogSize[i] = 24 + Math.random() * 34;
       this.fogSeed[i] = Math.random() * 6.283;
       this.fogAlpha[i] = 0.0;
     }
@@ -444,9 +444,9 @@ export class WeatherEffectsSystem {
     this.group.add(this.boltLines);
 
     // --- 6. Volumetric Headlight Mist Beams (for Fog / Heavy Rain / Night) ---
-    this.beamGeo = new THREE.ConeGeometry(4.2, 26.0, 18, 1, true);
+    this.beamGeo = new THREE.ConeGeometry(5.2, 34.0, 20, 1, true);
     // Point apex at local z=0, flare forward along +Z
-    this.beamGeo.translate(0, -13.0, 0);
+    this.beamGeo.translate(0, -17.0, 0);
     this.beamGeo.rotateX(-Math.PI / 2);
 
     this.beamMat = new THREE.ShaderMaterial({
@@ -463,7 +463,7 @@ export class WeatherEffectsSystem {
         varying vec3 vViewPos;
         varying float vAxial;
         void main() {
-          vAxial = clamp(position.z / 26.0, 0.0, 1.0);
+          vAxial = clamp(position.z / 34.0, 0.0, 1.0);
           vNormalView = normalize(normalMatrix * normal);
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           vViewPos = mv.xyz;
@@ -832,40 +832,40 @@ export class WeatherEffectsSystem {
 
     // 4. Drifting Volumetric Ground Fog / Squall Mist Banks
     const fogBankStrength = isFog
-      ? 0.44
+      ? 0.56
       : isStorm
-        ? 0.22
+        ? 0.24
         : isHeavyRain
-          ? 0.18
+          ? 0.19
           : weather === 'cloudy'
-            ? 0.08
-            : nightFactor * 0.07;
+            ? 0.09
+            : nightFactor * 0.04;
 
     if (fogBankStrength > 0.015) {
       this.fogPoints.visible = true;
       this.fogMat.uniforms.uTime.value = elapsedTime;
-      const driftSpd = isStorm ? 4.2 : isFog ? 1.4 : 2.2;
+      const driftSpd = isStorm ? 4.2 : isFog ? 1.55 : 2.2;
       for (let i = 0; i < FOG_BANK_COUNT; i++) {
         const i3 = i * 3;
         this.fogOffset[i3] += driftSpd * dt * (i % 2 === 0 ? 1 : 0.7);
         this.fogOffset[i3 + 2] += driftSpd * 0.45 * dt;
-        if (this.fogOffset[i3] > 155) this.fogOffset[i3] -= 310;
-        if (this.fogOffset[i3 + 2] > 155) this.fogOffset[i3 + 2] -= 310;
+        if (this.fogOffset[i3] > 165) this.fogOffset[i3] -= 330;
+        if (this.fogOffset[i3 + 2] > 165) this.fogOffset[i3 + 2] -= 330;
 
         this.fogPos[i3] = physics.x + this.fogOffset[i3];
         this.fogPos[i3 + 1] = physics.y + this.fogOffset[i3 + 1];
         this.fogPos[i3 + 2] = physics.z + this.fogOffset[i3 + 2];
-        this.fogAlpha[i] = fogBankStrength * (0.65 + 0.35 * Math.sin(this.fogSeed[i] + elapsedTime * 0.25));
+        this.fogAlpha[i] = fogBankStrength * (0.62 + 0.38 * Math.sin(this.fogSeed[i] + elapsedTime * 0.28));
       }
       this.fogGeo.attributes.position.needsUpdate = true;
       this.fogGeo.attributes.aAlpha.needsUpdate = true;
 
       const fogLuma = isFog
-        ? THREE.MathUtils.lerp(0.76, 0.16, nightFactor)
-        : THREE.MathUtils.lerp(0.58, 0.12, nightFactor) + lightningFlash * 0.35;
+        ? THREE.MathUtils.lerp(0.76, 0.095, nightFactor)
+        : THREE.MathUtils.lerp(0.56, 0.075, nightFactor) + lightningFlash * 0.32;
       (this.fogMat.uniforms.uFogTint.value as THREE.Color).setRGB(
-        fogLuma * 0.90,
-        fogLuma * 0.94,
+        fogLuma * 0.88,
+        fogLuma * 0.93,
         fogLuma,
       );
     } else {
@@ -890,35 +890,37 @@ export class WeatherEffectsSystem {
       }
     }
 
-    // 6. Volumetric Headlight Haze Beams in Fog / Storm / Heavy Rain / Night
+    // 6. Volumetric Headlight Mist Beams (visible in Fog, Storm, Rain & Night across all cameras)
     const hazeFactor = isFog
-      ? 0.22
+      ? 0.27
       : isStorm || isHeavyRain
-        ? 0.14
+        ? 0.16
         : isRain
-          ? 0.09
-          : nightFactor * 0.075;
-    if (headlightsOn && hazeFactor > 0.01 && !ctx.isFirstPerson) {
+          ? 0.105
+          : nightFactor * 0.105;
+    if (headlightsOn && hazeFactor > 0.01) {
       this.beamGroup.visible = true;
       const halfW = spec.dimensions.width * 0.31;
-      const beamY = physics.y + spec.dimensions.groundClearance + spec.dimensions.height * 0.32;
-      const frontOff = spec.dimensions.length * 0.51;
+      const beamY = physics.y + spec.dimensions.groundClearance + spec.dimensions.height * 0.30;
+      const frontOff = spec.dimensions.length * 0.51 + (ctx.isFirstPerson ? 0.55 : 0.0);
 
       this.beamMeshL.position.set(
         physics.x + sinH * frontOff + cosH * halfW,
         beamY,
         physics.z + cosH * frontOff - sinH * halfW,
       );
-      this.beamMeshL.rotation.set(0.06, physics.heading + 0.04, 0, 'YXZ');
+      this.beamMeshL.rotation.set(0.05, physics.heading + 0.04, 0, 'YXZ');
 
       this.beamMeshR.position.set(
         physics.x + sinH * frontOff - cosH * halfW,
         beamY,
         physics.z + cosH * frontOff + sinH * halfW,
       );
-      this.beamMeshR.rotation.set(0.06, physics.heading - 0.04, 0, 'YXZ');
+      this.beamMeshR.rotation.set(0.05, physics.heading - 0.04, 0, 'YXZ');
 
-      this.beamMat.uniforms.uOpacity.value = hazeFactor * (0.65 + nightFactor * 0.65);
+      const fpScale = ctx.isFirstPerson ? 0.58 : 1.0;
+      this.beamMat.uniforms.uOpacity.value =
+        hazeFactor * (0.65 + nightFactor * 0.65) * fpScale;
     } else {
       this.beamGroup.visible = false;
     }

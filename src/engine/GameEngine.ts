@@ -47,6 +47,8 @@ const RadialSpeedBlurShader = {
   uniforms: {
     tDiffuse: { value: null },
     uBlurAmount: { value: 0.0 },
+    uRainStreak: { value: 0.0 },
+    uInnerRadius: { value: 0.15 },
     uCenter: { value: new THREE.Vector2(0.5, 0.46) },
   },
   vertexShader: `
@@ -59,26 +61,32 @@ const RadialSpeedBlurShader = {
   fragmentShader: `
     uniform sampler2D tDiffuse;
     uniform float uBlurAmount;
+    uniform float uRainStreak;
+    uniform float uInnerRadius;
     uniform vec2 uCenter;
     varying vec2 vUv;
 
     void main() {
       vec4 base = texture2D(tDiffuse, vUv);
-      if (uBlurAmount <= 0.003) {
+      if (uBlurAmount <= 0.003 && uRainStreak <= 0.003) {
         gl_FragColor = base;
         return;
       }
       vec2 dir = vUv - uCenter;
       float dist = length(dir);
-      float mask = smoothstep(0.16, 0.88, dist) * uBlurAmount;
+      float radialMask = smoothstep(uInnerRadius, 0.88, dist) * uBlurAmount;
+      float rainEdge = smoothstep(max(0.08, uInnerRadius * 0.72), 0.92, dist);
+      vec2 rainVec = vec2(0.14, 0.99) * uRainStreak * (0.015 + 0.024 * rainEdge);
+
       vec3 accum = base.rgb;
       for (int i = 1; i <= 7; i++) {
         float fi = float(i) / 7.0;
-        vec2 offset = dir * (-fi * mask * 0.14);
-        accum += texture2D(tDiffuse, clamp(vUv + offset, 0.001, 0.999)).rgb;
+        vec2 radialOffset = dir * (-fi * radialMask * 0.16);
+        vec2 rainOffset = rainVec * ((fi - 0.35) * 0.85);
+        accum += texture2D(tDiffuse, clamp(vUv + radialOffset + rainOffset, 0.001, 0.999)).rgb;
       }
       vec3 blurred = accum / 8.0;
-      float vig = 1.0 - smoothstep(0.55, 1.25, dist) * (uBlurAmount * 0.55);
+      float vig = 1.0 - smoothstep(0.56, 1.26, dist) * (uBlurAmount * 0.48 + uRainStreak * 0.18);
       gl_FragColor = vec4(blurred * vig, base.a);
     }
   `,
@@ -258,6 +266,80 @@ function buildCoastalSkyEnvironmentTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function buildOvercastSkyEnvironmentTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  // Soft diffused slate-silver overcast sky & cool wet-asphalt reflection hemisphere
+  const vGrad = ctx.createLinearGradient(0, 0, 0, 256);
+  vGrad.addColorStop(0.0, '#445366');
+  vGrad.addColorStop(0.24, '#6e8094');
+  vGrad.addColorStop(0.45, '#a2b0bf');
+  vGrad.addColorStop(0.50, '#bac5d0');
+  vGrad.addColorStop(0.54, '#647280');
+  vGrad.addColorStop(0.72, '#3a4552');
+  vGrad.addColorStop(1.0, '#222a34');
+  ctx.fillStyle = vGrad;
+  ctx.fillRect(0, 0, 512, 256);
+
+  // Subtle multi-layered overcast cloud variation without sharp solar hotspots
+  for (let i = 0; i < 18; i++) {
+    const cx = ((i * 41 + 19) % 512);
+    const cy = 62 + (i % 4) * 16;
+    const rad = 36 + (i % 3) * 18;
+    const cg = ctx.createRadialGradient(cx, cy, 4, cx, cy, rad);
+    cg.addColorStop(0, 'rgba(210,220,232,0.28)');
+    cg.addColorStop(1, 'rgba(210,220,232,0)');
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildNightSkyEnvironmentTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  // Deep midnight coastal sky -> muted horizon haze -> dark ocean & nocturnal asphalt floor
+  const vGrad = ctx.createLinearGradient(0, 0, 0, 256);
+  vGrad.addColorStop(0.0, '#02050c');
+  vGrad.addColorStop(0.28, '#050c1a');
+  vGrad.addColorStop(0.46, '#0a162b');
+  vGrad.addColorStop(0.50, '#0f1f38');
+  vGrad.addColorStop(0.54, '#081222');
+  vGrad.addColorStop(0.74, '#040912');
+  vGrad.addColorStop(1.0, '#020408');
+  ctx.fillStyle = vGrad;
+  ctx.fillRect(0, 0, 512, 256);
+
+  // Restraint cool moonlight rim sheen (subtle metallic edge highlights, never bright icy-white washout)
+  const moonX = 160;
+  const moonY = 72;
+  const mg = ctx.createRadialGradient(moonX, moonY, 2, moonX, moonY, 44);
+  mg.addColorStop(0.0, 'rgba(130, 165, 220, 0.34)');
+  mg.addColorStop(0.35, 'rgba(72, 106, 162, 0.16)');
+  mg.addColorStop(1.0, 'rgba(20, 38, 68, 0)');
+  ctx.fillStyle = mg;
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 44, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function detectSoftwareWebGL(): boolean {
   try {
     const gl = document.createElement('canvas').getContext('webgl2');
@@ -284,6 +366,9 @@ export class GameEngine {
   private atmosphere: AtmosphereSystem;
   private world: BuiltWorld;
   private trafficAI: TrafficAndAIManager;
+  private dayEnvTex: THREE.Texture;
+  private overcastEnvTex: THREE.Texture;
+  private nightEnvTex: THREE.Texture;
 
   // Post-Processing Pipeline (Hardware GPU, MEDIUM/HIGH/ULTRA)
   private composer: EffectComposer | null = null;
@@ -483,13 +568,20 @@ export class GameEngine {
       2400,
     );
 
-    // Sunlit coastal sky-and-ocean PMREM IBL for authentic car paint, hood, and windshield reflections
+    // Pre-baked day, overcast/fog, and midnight PMREM IBL maps so night metal/paint never reflects daytime white-blue sky
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     pmrem.compileEquirectangularShader();
     const coastalEnvTex = buildCoastalSkyEnvironmentTexture();
-    this.scene.environment = pmrem.fromEquirectangular(coastalEnvTex).texture;
+    const overcastSrcTex = buildOvercastSkyEnvironmentTexture();
+    const nightSrcTex = buildNightSkyEnvironmentTexture();
+    this.dayEnvTex = pmrem.fromEquirectangular(coastalEnvTex).texture;
+    this.overcastEnvTex = pmrem.fromEquirectangular(overcastSrcTex).texture;
+    this.nightEnvTex = pmrem.fromEquirectangular(nightSrcTex).texture;
     coastalEnvTex.dispose();
+    overcastSrcTex.dispose();
+    nightSrcTex.dispose();
     pmrem.dispose();
+    this.scene.environment = this.dayEnvTex;
 
     // Crisp coastal daylight rig + cool sky bounce fill + car-following texel-snapped shadow frustum
     this.hemiLight = new THREE.HemisphereLight(0xc8eeff, 0x3a4838, 0.68);
@@ -517,14 +609,14 @@ export class GameEngine {
     this.scene.add(this.skyFillLight);
     this.scene.add(this.skyFillLight.target);
 
-    // Single wide soft-penumbra road-wash LED beam (no twin spotlight circles or floating cone hoops)
+    // Focused automotive LED forward beam projecting crisp illumination down dark & foggy roads
     this.headlightBeam = new THREE.SpotLight(
       0xf6f9ff,
       0,
-      220,
-      Math.PI / 2.65,
-      1.0,
-      1.15,
+      240,
+      Math.PI / 3.7,
+      0.72,
+      1.08,
     );
     this.headlightBeam.castShadow = false;
     this.scene.add(this.headlightBeam);
@@ -535,12 +627,12 @@ export class GameEngine {
 
     // Pooled warm-sodium highway streetlamp lights & oncoming traffic headlights for night, fog & storm
     for (let i = 0; i < 4; i++) {
-      const lamp = new THREE.PointLight(0xffb454, 0, 62, 1.4);
+      const lamp = new THREE.PointLight(0xffba63, 0, 76, 1.32);
       this.scene.add(lamp);
       this.streetLampLights.push(lamp);
     }
     for (let i = 0; i < 2; i++) {
-      const thl = new THREE.PointLight(0xe4f0ff, 0, 52, 1.45);
+      const thl = new THREE.PointLight(0xe4f0ff, 0, 68, 1.32);
       this.scene.add(thl);
       this.trafficHeadlights.push(thl);
     }
@@ -610,7 +702,10 @@ export class GameEngine {
       this.composer.addPass(new OutputPass());
     }
 
-    this.trafficAI = new TrafficAndAIManager(this.textures.contactShadowMap);
+    this.trafficAI = new TrafficAndAIManager(
+      this.textures.contactShadowMap,
+      settings.trafficDensity ?? 'normal',
+    );
     this.scene.add(this.trafficAI.group);
 
     // Comprehensive Weather VFX System (3D Streaks, Splashes, Spray, Fog Banks, Lightning, Beam Haze)
@@ -759,6 +854,7 @@ export class GameEngine {
   public applySettings(settings: GameSettings): void {
     this.settings = settings;
     audioEngine.applySettings(settings);
+    this.trafficAI.setTrafficDensity(settings.trafficDensity ?? 'normal');
 
     let dpr = 1;
     let shadowEnabled = !this.isSoftwareGl;
@@ -864,18 +960,32 @@ export class GameEngine {
 
     let fogDensity = 0.00042;
     if (this.weather === 'fog') {
-      fogDensity = 0.0086 + atm.nightFactor * 0.0014;
+      fogDensity = 0.0145 + atm.nightFactor * 0.0025;
     } else if (this.weather === 'thunderstorm') {
-      fogDensity = 0.0036 + atm.nightFactor * 0.0011;
+      fogDensity = 0.0044 + atm.nightFactor * 0.0011;
     } else if (this.weather === 'heavy_rain') {
-      fogDensity = 0.0032 + atm.nightFactor * 0.0010;
+      fogDensity = 0.0038 + atm.nightFactor * 0.0010;
     } else if (this.weather === 'rain') {
-      fogDensity = 0.0020 + atm.nightFactor * 0.0009;
+      fogDensity = 0.0024 + atm.nightFactor * 0.0009;
     } else if (this.weather === 'cloudy') {
-      fogDensity = 0.00088 + atm.nightFactor * 0.00105;
+      fogDensity = 0.00145 + atm.nightFactor * 0.00085;
     } else {
       const goldenMist = Math.max(0, 1 - Math.abs(atm.sunElevation) * 4.2) * 0.00018;
-      fogDensity += goldenMist + atm.nightFactor * 0.00105;
+      fogDensity += goldenMist + atm.nightFactor * 0.00095;
+    }
+
+    const targetEnvTex =
+      atm.nightFactor > 0.45
+        ? this.nightEnvTex
+        : this.weather === 'fog' ||
+            this.weather === 'cloudy' ||
+            this.weather === 'rain' ||
+            this.weather === 'heavy_rain' ||
+            this.weather === 'thunderstorm'
+          ? this.overcastEnvTex
+          : this.dayEnvTex;
+    if (this.scene.environment !== targetEnvTex) {
+      this.scene.environment = targetEnvTex;
     }
 
     if (this.scene.fog instanceof THREE.FogExp2) {
@@ -903,8 +1013,8 @@ export class GameEngine {
 
     this.hemiLight.color.copy(atm.hemiSkyColor);
     this.hemiLight.groundColor.copy(atm.hemiGroundColor);
-    this.hemiLight.intensity = atm.hemiIntensity + this.lightningFlash * 0.55;
-    this.scene.environmentIntensity = atm.envIntensity + this.lightningFlash * 0.25;
+    this.hemiLight.intensity = atm.hemiIntensity + this.lightningFlash * 0.42;
+    this.scene.environmentIntensity = atm.envIntensity + this.lightningFlash * 0.16;
     this.renderer.toneMappingExposure = atm.exposure;
 
     this.syncBloomStrength();
@@ -937,6 +1047,8 @@ export class GameEngine {
       this.physics.y = this.showcasePt.y + 0.02;
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
+        this.speedBlurPass.uniforms.uInnerRadius.value = 0.15;
       }
       if (this.currentCarData) {
         this.onDirtChange?.(this.currentCarData.carId, this.carDirtLevel);
@@ -1230,6 +1342,8 @@ export class GameEngine {
         this.speedBlurPass.uniforms.uBlurAmount.value = this.photoBlurEnabled
           ? this.photoBlurIntensity * 0.95
           : 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
+        this.speedBlurPass.uniforms.uInnerRadius.value = 0.15;
         (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.5);
       }
       audioEngine.updateContinuous({
@@ -1247,6 +1361,8 @@ export class GameEngine {
       this.camera.rotation.z = 0;
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
+        this.speedBlurPass.uniforms.uInnerRadius.value = 0.15;
         (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.46);
       }
     }
@@ -1263,6 +1379,8 @@ export class GameEngine {
     this.photoBlurIntensity = 0.45;
     if (this.speedBlurPass) {
       this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+      this.speedBlurPass.uniforms.uRainStreak.value = 0;
+      this.speedBlurPass.uniforms.uInnerRadius.value = 0.15;
     }
   }
 
@@ -1318,7 +1436,10 @@ export class GameEngine {
     if (this.contextLost) return null;
     try {
       const blurVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uBlurAmount.value as number) : 0;
-      if (this.speedBlurPass) this.speedBlurPass.enabled = blurVal > 0.004;
+      const rainStreakVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uRainStreak.value as number) : 0;
+      if (this.speedBlurPass) {
+        this.speedBlurPass.enabled = blurVal > 0.004 || rainStreakVal > 0.004;
+      }
       const useComposerNow =
         this.composer !== null &&
         ((this.usePostProcessing && ((this.bloomPass?.enabled ?? false) || (this.speedBlurPass?.enabled ?? false))) ||
@@ -1621,7 +1742,10 @@ export class GameEngine {
       if (!this.contextLost) {
         this.stepSimulation(dt);
         const blurVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uBlurAmount.value as number) : 0;
-        if (this.speedBlurPass) this.speedBlurPass.enabled = blurVal > 0.004;
+        const rainStreakVal = this.speedBlurPass ? (this.speedBlurPass.uniforms.uRainStreak.value as number) : 0;
+        if (this.speedBlurPass) {
+          this.speedBlurPass.enabled = blurVal > 0.004 || rainStreakVal > 0.004;
+        }
         const rainLensActive = this.rainLensPass ? (this.rainLensPass.uniforms.uIntensity.value as number) > 0.01 && !this.photoMode : false;
         if (this.rainLensPass) this.rainLensPass.enabled = rainLensActive;
         const useComposerNow =
@@ -1923,6 +2047,7 @@ export class GameEngine {
       this.camera.updateProjectionMatrix();
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
       }
       return;
     }
@@ -1953,6 +2078,8 @@ export class GameEngine {
         this.speedBlurPass.uniforms.uBlurAmount.value = this.photoBlurEnabled
           ? this.photoBlurIntensity * 0.95
           : 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
+        this.speedBlurPass.uniforms.uInnerRadius.value = 0.15;
         (this.speedBlurPass.uniforms.uCenter.value as THREE.Vector2).set(0.5, 0.5);
       }
       return;
@@ -2154,20 +2281,20 @@ export class GameEngine {
       this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.045);
     }
 
-    // Wide, soft-penumbra forward highway illumination (strong at night, fog & driving rain)
+    // Focused automotive LED beam cutting through dark nights, fog & driving rain
     if (hlOn) {
       const flickMult = damagedFlicker ? 1.0 : 0.35;
-      const weatherBeamBoost = this.weather === 'fog' ? 58 : isWet ? 44 : 0;
-      const beamStrength = (24 + atm.nightFactor * 225 + weatherBeamBoost) * flickMult;
+      const weatherBeamBoost = this.weather === 'fog' ? 115 : isWet ? 75 : 0;
+      const beamStrength = (26 + atm.nightFactor * 310 + weatherBeamBoost) * flickMult;
       this.headlightBeam.position.set(
         this.physics.x + sinH * 2.15,
-        this.physics.y + 0.82,
+        this.physics.y + 0.84,
         this.physics.z + cosH * 2.15,
       );
       this.headlightBeam.target.position.set(
-        this.physics.x + sinH * 98,
-        this.physics.y - 0.15,
-        this.physics.z + cosH * 98,
+        this.physics.x + sinH * 115,
+        this.physics.y - 0.12,
+        this.physics.z + cosH * 115,
       );
       this.headlightBeam.target.updateMatrixWorld();
       this.headlightBeam.intensity = beamStrength;
@@ -2222,7 +2349,7 @@ export class GameEngine {
           const ts = Math.sin(tgt.heading);
           const tc = Math.cos(tgt.heading);
           tl.position.set(tgt.x + ts * 6.5, tgt.y + 0.9, tgt.z + tc * 6.5);
-          tl.intensity = 28 * trafficLightFactor;
+          tl.intensity = 44 * trafficLightFactor;
         } else {
           tl.intensity = 0;
         }
@@ -2518,24 +2645,7 @@ export class GameEngine {
       this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFpFov, 7.5, dt);
       this.camera.updateProjectionMatrix();
 
-      if (this.speedBlurPass) {
-        const speedNorm = THREE.MathUtils.clamp(
-          (this.physics.speedKmh - 95) / 220,
-          0,
-          1,
-        );
-        // Keep gauges razor-sharp in Cockpit while giving tactile edge speed blur in Hood/Bumper
-        const targetBlur = isCockpit
-          ? this.crashFlash * 0.25
-          : speedNorm * 0.22 + (this.physics.nitroActive ? 0.18 : 0) + this.crashFlash * 0.35;
-        const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
-        this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
-          curBlur,
-          targetBlur,
-          8,
-          dt,
-        );
-      }
+      this.updateDrivingMotionBlur(dt, isCockpit);
       return;
     }
 
@@ -2577,6 +2687,7 @@ export class GameEngine {
       this.camera.updateProjectionMatrix();
       if (this.speedBlurPass) {
         this.speedBlurPass.uniforms.uBlurAmount.value = 0;
+        this.speedBlurPass.uniforms.uRainStreak.value = 0;
       }
       return;
     } else {
@@ -2619,24 +2730,68 @@ export class GameEngine {
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 7.5, dt);
     this.camera.updateProjectionMatrix();
 
-    if (this.speedBlurPass) {
-      const speedNorm = THREE.MathUtils.clamp(
-        (this.physics.speedKmh - 75) / 220,
-        0,
-        1,
-      );
-      const targetBlur =
-        speedNorm * 0.26 +
-        (this.physics.nitroActive ? 0.22 : 0) +
-        this.crashFlash * 0.45;
-      const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
-      this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
-        curBlur,
-        targetBlur,
-        8,
-        dt,
-      );
-    }
+    this.updateDrivingMotionBlur(dt, false);
+  }
+
+  private updateDrivingMotionBlur(dt: number, isCockpit: boolean): void {
+    if (!this.speedBlurPass) return;
+
+    const blurEnabled = this.settings.motionBlur !== false;
+    const isRaining =
+      this.weather === 'rain' ||
+      this.weather === 'heavy_rain' ||
+      this.weather === 'thunderstorm';
+    const rainBase =
+      this.weather === 'thunderstorm'
+        ? 0.65
+        : this.weather === 'heavy_rain'
+          ? 0.48
+          : this.weather === 'rain'
+            ? 0.28
+            : 0.0;
+
+    const speedKmh = this.physics.speedKmh;
+    const highSpeedNorm = THREE.MathUtils.clamp((speedKmh - 70) / 185, 0, 1);
+    const rainSpeedFactor = 0.55 + 0.45 * THREE.MathUtils.clamp(speedKmh / 130, 0, 1);
+    const cockpitAtten = isCockpit ? 0.62 : 1.0;
+
+    const targetBlur = blurEnabled
+      ? (highSpeedNorm * 0.34 +
+          (this.physics.nitroActive ? 0.24 : 0) +
+          (isRaining ? rainBase * 0.26 * rainSpeedFactor : 0)) *
+          cockpitAtten +
+        this.crashFlash * (isCockpit ? 0.24 : 0.42)
+      : this.crashFlash * (isCockpit ? 0.2 : 0.32);
+
+    const targetRainStreak =
+      blurEnabled && isRaining
+        ? rainBase * rainSpeedFactor * (isCockpit ? 0.78 : 1.0)
+        : 0;
+
+    const targetInnerRadius = isCockpit ? 0.36 : 0.15;
+
+    const curBlur = this.speedBlurPass.uniforms.uBlurAmount.value as number;
+    const curRain = this.speedBlurPass.uniforms.uRainStreak.value as number;
+    const curInner = this.speedBlurPass.uniforms.uInnerRadius.value as number;
+
+    this.speedBlurPass.uniforms.uBlurAmount.value = THREE.MathUtils.damp(
+      curBlur,
+      targetBlur,
+      8,
+      dt,
+    );
+    this.speedBlurPass.uniforms.uRainStreak.value = THREE.MathUtils.damp(
+      curRain,
+      targetRainStreak,
+      7,
+      dt,
+    );
+    this.speedBlurPass.uniforms.uInnerRadius.value = THREE.MathUtils.damp(
+      curInner,
+      targetInnerRadius,
+      10,
+      dt,
+    );
   }
 
   private updateStreetLampLights(nightFactor: number): void {
@@ -2661,7 +2816,7 @@ export class GameEngine {
     const pz = this.physics.z;
     const bestIdx = [-1, -1, -1, -1];
     const bestDist = [Infinity, Infinity, Infinity, Infinity];
-    const maxRangeSq = 82 * 82;
+    const maxRangeSq = 88 * 88;
 
     for (let i = 0; i < lamps.length; i++) {
       const lp = lamps[i];
@@ -2688,8 +2843,8 @@ export class GameEngine {
       if (idx >= 0) {
         const lp = lamps[idx];
         light.position.set(lp.x, lp.y, lp.z);
-        const fade = 1 - THREE.MathUtils.smoothstep(Math.sqrt(bestDist[s]), 42, 82);
-        light.intensity = 46 * lampNeed * fade;
+        const fade = 1 - THREE.MathUtils.smoothstep(Math.sqrt(bestDist[s]), 44, 88);
+        light.intensity = 72 * lampNeed * fade;
       } else {
         light.intensity = 0;
       }
@@ -2778,6 +2933,12 @@ export class GameEngine {
         z: r.z,
         name: r.name,
       })),
+      trafficPositions:
+        this.trafficAI.racers.length === 0
+          ? this.trafficAI.traffic
+              .filter((t) => t.carRig.root.visible)
+              .map((t) => ({ x: t.x, z: t.z }))
+          : [],
     });
   }
 
@@ -2809,6 +2970,9 @@ export class GameEngine {
     this.skidmarks.dispose();
     this.crashEffects.dispose();
     this.nitroFire.dispose();
+    this.dayEnvTex.dispose();
+    this.overcastEnvTex.dispose();
+    this.nightEnvTex.dispose();
     this.showroomTurntable.geometry.dispose();
     (this.showroomTurntable.material as THREE.Material).dispose();
     this.renderer.dispose();

@@ -54,30 +54,30 @@ interface SkyKeyframe {
 
 const SKY_KEYFRAMES: SkyKeyframe[] = [
   {
-    phase: 0.0, // Realistic Moonlit Coastal Midnight (00:00)
-    top: '#030816',
-    mid: '#08142a',
-    horizon: '#122440',
-    sunCol: '#b7d0f7',
-    hemiSky: '#1c3057',
-    hemiGround: '#070a12',
-    fog: '#0b1629',
-    oceanDeep: '#030d1d',
-    oceanShallow: '#09233b',
-    cloud: '#16243b',
+    phase: 0.0, // Deep Moonlit Coastal Midnight (00:00)
+    top: '#02050e',
+    mid: '#050d1d',
+    horizon: '#0c192e',
+    sunCol: '#a8c6f2',
+    hemiSky: '#142342',
+    hemiGround: '#03050a',
+    fog: '#091323',
+    oceanDeep: '#020914',
+    oceanShallow: '#061a2c',
+    cloud: '#0e1a2e',
   },
   {
     phase: 0.21, // Pre-dawn twilight (05:00)
-    top: '#071128',
-    mid: '#182447',
-    horizon: '#45355a',
+    top: '#050c1f',
+    mid: '#121d3b',
+    horizon: '#3a2d4e',
     sunCol: '#f59e0b',
-    hemiSky: '#2e3c68',
-    hemiGround: '#0c101b',
-    fog: '#1e233b',
-    oceanDeep: '#041426',
-    oceanShallow: '#0e3047',
-    cloud: '#4b4464',
+    hemiSky: '#24325c',
+    hemiGround: '#080b14',
+    fog: '#181e33',
+    oceanDeep: '#031020',
+    oceanShallow: '#0b263b',
+    cloud: '#2e2b45',
   },
   {
     phase: 0.26, // Golden Sunrise (06:15)
@@ -146,29 +146,29 @@ const SKY_KEYFRAMES: SkyKeyframe[] = [
   },
   {
     phase: 0.81, // Deep Blue-Hour Dusk (19:25)
-    top: '#060d20',
-    mid: '#151e3d',
-    horizon: '#382a4a',
+    top: '#040917',
+    mid: '#0c152b',
+    horizon: '#24223c',
     sunCol: '#93c5fd',
-    hemiSky: '#233259',
-    hemiGround: '#0a0e18',
-    fog: '#141a2e',
-    oceanDeep: '#041224',
-    oceanShallow: '#0a283d',
-    cloud: '#30394f',
+    hemiSky: '#1a2748',
+    hemiGround: '#05070e',
+    fog: '#101729',
+    oceanDeep: '#030d1c',
+    oceanShallow: '#071f32',
+    cloud: '#1c2438',
   },
   {
     phase: 1.0, // Midnight Wrap (24:00)
-    top: '#030816',
-    mid: '#08142a',
-    horizon: '#122440',
-    sunCol: '#b7d0f7',
-    hemiSky: '#1c3057',
-    hemiGround: '#070a12',
-    fog: '#0b1629',
-    oceanDeep: '#030d1d',
-    oceanShallow: '#09233b',
-    cloud: '#16243b',
+    top: '#02050e',
+    mid: '#050d1d',
+    horizon: '#0c192e',
+    sunCol: '#a8c6f2',
+    hemiSky: '#142342',
+    hemiGround: '#03050a',
+    fog: '#091323',
+    oceanDeep: '#020914',
+    oceanShallow: '#061a2c',
+    cloud: '#0e1a2e',
   },
 ];
 
@@ -187,45 +187,51 @@ const PARSED_FRAMES = SKY_KEYFRAMES.map((k) => ({
   cloud: new THREE.Color(k.cloud),
 }));
 
-const _cloudyTop = new THREE.Color('#4a5f7a');
-const _cloudyMid = new THREE.Color('#7f94ab');
-const _cloudyHor = new THREE.Color('#b6c5d4');
-const _cloudyFog = new THREE.Color('#97a8ba');
+const _cloudyTop = new THREE.Color('#44566c');
+const _cloudyMid = new THREE.Color('#718399');
+const _cloudyHor = new THREE.Color('#a8b7c6');
+const _cloudyFog = new THREE.Color('#95a5b6');
+const _cloudyHemiSky = new THREE.Color('#9fb1c4');
+const _cloudyHemiGround = new THREE.Color('#252d36');
 
-const _fogDayTop = new THREE.Color('#8da0b3');
-const _fogDayMid = new THREE.Color('#b4c3d1');
-const _fogDayHor = new THREE.Color('#cedae5');
-const _fogDayFog = new THREE.Color('#c3d0dc');
+const _fogDayTop = new THREE.Color('#97a8b8');
+const _fogDayMid = new THREE.Color('#b6c4d0');
+const _fogDayHor = new THREE.Color('#cdd8e1');
+const _fogDayFog = new THREE.Color('#c7d3dc');
+const _fogDayHemiSky = new THREE.Color('#b7c4cf');
+const _fogDayHemiGround = new THREE.Color('#303840');
 
-const _stormTop = new THREE.Color('#1a2434');
-const _stormMid = new THREE.Color('#2d3b4e');
-const _stormHor = new THREE.Color('#4d5f73');
-const _stormFog = new THREE.Color('#3b4a5c');
+const _stormTop = new THREE.Color('#172130');
+const _stormMid = new THREE.Color('#283648');
+const _stormHor = new THREE.Color('#445569');
+const _stormFog = new THREE.Color('#354354');
 
-const _rainTop = new THREE.Color('#2c3c52');
-const _rainMid = new THREE.Color('#4e627a');
-const _rainHor = new THREE.Color('#778a9e');
-const _rainFog = new THREE.Color('#64768a');
+const _rainTop = new THREE.Color('#29384d');
+const _rainMid = new THREE.Color('#475a70');
+const _rainHor = new THREE.Color('#6f8296');
+const _rainFog = new THREE.Color('#5c6e82');
 
-const _nightOvercastTop = new THREE.Color('#040812');
-const _nightOvercastMid = new THREE.Color('#091120');
-const _nightOvercastHor = new THREE.Color('#101d31');
-const _nightFogMist = new THREE.Color('#0d1726');
+const _nightOvercastTop = new THREE.Color('#02050b');
+const _nightOvercastMid = new THREE.Color('#060d19');
+const _nightOvercastHor = new THREE.Color('#0c1726');
+const _nightFogMist = new THREE.Color('#0a1320');
+const _nightOvercastHemiSky = new THREE.Color('#0f1a2d');
+const _nightOvercastHemiGround = new THREE.Color('#020408');
 
-const _overcastOceanDeep = new THREE.Color('#0d2c3e');
-const _overcastOceanShallow = new THREE.Color('#235263');
-const _nightOceanDeep = new THREE.Color('#030c18');
-const _nightOceanShallow = new THREE.Color('#081e30');
-const _overcastCloud = new THREE.Color('#7b8a9b');
-const _nightOvercastCloud = new THREE.Color('#142033');
+const _overcastOceanDeep = new THREE.Color('#0c2838');
+const _overcastOceanShallow = new THREE.Color('#1f4959');
+const _nightOceanDeep = new THREE.Color('#020812');
+const _nightOceanShallow = new THREE.Color('#061626');
+const _overcastCloud = new THREE.Color('#7c8b9c');
+const _nightOvercastCloud = new THREE.Color('#0c1524');
 
-const _moonLightColor = new THREE.Color('#93b8f2');
+const _moonLightColor = new THREE.Color('#8fb5eb');
 const _lightningFogFlash = new THREE.Color('#b8d4f5');
 const _sunTrueDir = new THREE.Vector3();
 const _moonDir = new THREE.Vector3();
 
 export function createAtmosphereSystem(
-  cloudMap: THREE.Texture,
+  _cloudMap: THREE.Texture,
 ): AtmosphereSystem {
   const group = new THREE.Group();
   const sunDirection = new THREE.Vector3(0.4, 0.72, -0.55).normalize();
@@ -238,7 +244,7 @@ export function createAtmosphereSystem(
     hemiGroundColor: new THREE.Color('#334155'),
     hemiIntensity: 0.72,
     fogColor: new THREE.Color('#a4e4ff'),
-    envIntensity: 1.05,
+    envIntensity: 1.0,
     exposure: 1.02,
     bloomStrength: 0.06,
     nightFactor: 0,
@@ -247,7 +253,7 @@ export function createAtmosphereSystem(
     derivedTimeOfDay: 'day',
   };
 
-  // 1. Atmospheric Scattering Sky Dome + Volumetric Procedural Cloud Deck + Cratered Moon + Milky Way
+  // 1. Physically Coherent Atmospheric Sky Dome + Multi-Layer Volumetric Clouds + Stars + Moon
   const skyGeo = new THREE.SphereGeometry(1, 56, 36);
   const skyUniforms = {
     uTime: { value: 0 },
@@ -260,6 +266,7 @@ export function createAtmosphereSystem(
     uMoonDir: { value: new THREE.Vector3(-0.4, 0.5, -0.5).normalize() },
     uSunStrength: { value: 0.9 },
     uMoonStrength: { value: 0.0 },
+    uStarVisibility: { value: 0.0 },
     uCloudCoverage: { value: 0.28 },
     uCloudDarkness: { value: 0.0 },
     uFogHorizonLift: { value: 0.0 },
@@ -291,6 +298,7 @@ export function createAtmosphereSystem(
       uniform vec3 uMoonDir;
       uniform float uSunStrength;
       uniform float uMoonStrength;
+      uniform float uStarVisibility;
       uniform float uCloudCoverage;
       uniform float uCloudDarkness;
       uniform float uFogHorizonLift;
@@ -301,6 +309,12 @@ export function createAtmosphereSystem(
         p = fract(p * vec2(234.34, 435.345));
         p += dot(p, p + 34.23);
         return fract(p.x * p.y);
+      }
+
+      float hash31(vec3 p) {
+        p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
       }
 
       float noise2(vec2 p) {
@@ -314,87 +328,116 @@ export function createAtmosphereSystem(
         return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
       }
 
-      float fbm(vec2 p) {
+      float fbm5(vec2 p) {
         float v = 0.0;
         float a = 0.5;
         mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
           v += a * noise2(p);
-          p = rot * p * 2.03;
+          p = rot * p * 2.03 + vec2(1.7, 9.2);
           a *= 0.5;
         }
         return v;
       }
 
+      float starLayer(vec3 dir, float scale, float threshold) {
+        vec3 grid = dir * scale;
+        vec3 cell = floor(grid);
+        vec3 f = fract(grid) - 0.5;
+        float h = hash31(cell);
+        if (h < threshold) return 0.0;
+        vec3 offset = (vec3(hash31(cell + 1.3), hash31(cell + 2.7), hash31(cell + 4.1)) - 0.5) * 0.55;
+        float d = length(f - offset);
+        float core = smoothstep(0.16, 0.015, d);
+        float twinkle = 0.72 + 0.28 * sin(uTime * (1.5 + h * 3.0) + h * 31.4);
+        return core * twinkle * ((h - threshold) / (1.0 - threshold));
+      }
+
       void main() {
         vec3 dir = normalize(vWorldDir);
         float h = clamp(dir.y, 0.0, 1.0);
-        vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.22, h));
-        col = mix(col, uTopColor, smoothstep(0.18, 0.82, h));
+        vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.24, h));
+        col = mix(col, uTopColor, smoothstep(0.20, 0.85, h));
 
-        // Faint Milky Way & celestial dusk dust band on clear dark nights
-        if (uMoonStrength > 0.05) {
+        // Crisp Starfield & Subtle Milky Way Dust Band behind Clouds
+        if (uStarVisibility > 0.01 && h > 0.01) {
           float mwAxis = dir.x * 0.62 + dir.y * 0.54 - dir.z * 0.57;
-          float bandMask = exp(-mwAxis * mwAxis * 13.0) * smoothstep(0.05, 0.45, h);
-          float dustRift = fbm(dir.xz * 4.5 + dir.y * 2.2);
-          vec3 mwCol = vec3(0.07, 0.11, 0.21) * bandMask * (0.45 + 0.75 * dustRift);
-          col += mwCol * uMoonStrength * (1.0 - uCloudCoverage * 0.85);
+          float bandMask = exp(-mwAxis * mwAxis * 12.0) * smoothstep(0.03, 0.42, h);
+          float dustRift = fbm5(dir.xz * 3.6 + dir.y * 2.0);
+          vec3 mwCol = vec3(0.055, 0.09, 0.175) * bandMask * (0.4 + 0.75 * dustRift);
+          col += mwCol * uStarVisibility;
+
+          float horizonFade = smoothstep(0.02, 0.24, h);
+          float s1 = starLayer(dir, 145.0, 0.968) * 1.15;
+          float s2 = starLayer(dir, 235.0, 0.955) * 0.65;
+          vec3 starCol = mix(vec3(0.78, 0.87, 1.0), vec3(1.0, 0.94, 0.84), hash31(floor(dir * 145.0)));
+          col += starCol * (s1 + s2) * uStarVisibility * horizonFade;
         }
 
         // Solar Mie glow + crisp solar disc
         vec3 sDir = normalize(uSunDir);
         float sunAmt = max(dot(dir, sDir), 0.0);
-        float halo = pow(sunAmt, 9.0) * 0.36 * uSunStrength + pow(sunAmt, 42.0) * 0.44 * uSunStrength;
+        float halo = pow(sunAmt, 9.0) * 0.34 * uSunStrength + pow(sunAmt, 42.0) * 0.42 * uSunStrength;
         float core = smoothstep(0.9984, 0.9997, sunAmt) * 1.45 * uSunStrength;
         col += uSunColor * (halo + core);
 
-        // Cratered Lunar Disc + Atmospheric Moonlight Ring
+        // Cratered Lunar Disc + Atmospheric Moonlight Corona
         vec3 mDir = normalize(uMoonDir);
         float moonAmt = max(dot(dir, mDir), 0.0);
-        float moonHalo = pow(moonAmt, 24.0) * 0.28 * uMoonStrength + pow(moonAmt, 8.0) * 0.08 * uMoonStrength;
+        float moonHalo = pow(moonAmt, 28.0) * 0.24 * uMoonStrength + pow(moonAmt, 7.0) * 0.06 * uMoonStrength;
         float moonMask = smoothstep(0.9988, 0.99945, moonAmt) * uMoonStrength;
         float maria = 1.0;
         if (moonMask > 0.001) {
           vec3 mRight = normalize(cross(vec3(0.0, 1.0, 0.0), mDir));
           vec3 mUp = cross(mDir, mRight);
           vec2 mUv = vec2(dot(dir, mRight), dot(dir, mUp)) * 18.0;
-          maria = mix(0.68, 1.08, fbm(mUv + 3.1));
+          maria = mix(0.68, 1.06, fbm5(mUv + 3.1));
         }
         col += vec3(0.84, 0.91, 1.0) * (moonHalo + moonMask * 1.15 * maria);
 
-        // Volumetric Spherical FBM Cloud Deck (overhead cumulus, overcast stratus & storm anvils)
-        if (dir.y > 0.01) {
-          vec2 planeUv = dir.xz / (dir.y + 0.16);
-          vec2 wind = vec2(uTime * 0.011, uTime * 0.005);
-          float c1 = fbm(planeUv * 0.55 + wind);
-          float c2 = fbm(planeUv * 1.35 - wind * 1.4 + c1 * 0.65);
-          float cloudShape = mix(c1, c2, 0.42);
+        // Domain-Warped Volumetric Multi-Layer Cloud Deck (Clouds naturally occlude stars behind them)
+        if (dir.y > 0.004) {
+          vec2 planeUv = dir.xz / (dir.y + 0.20);
+          vec2 wind = vec2(uTime * 0.0095, uTime * 0.0042);
 
-          // Offset threshold by coverage so sunny = wispy scattered, cloudy/storm = full dense sky
-          float thresh = mix(0.66, 0.24, uCloudCoverage);
-          float cloudAlpha = smoothstep(thresh, thresh + 0.28, cloudShape);
-          // Soft horizon fade so clouds blend smoothly into distant mist
-          cloudAlpha *= smoothstep(0.015, 0.16, dir.y);
+          // Warp coordinates for realistic swirling stratocumulus structure
+          vec2 warp = vec2(
+            fbm5(planeUv * 0.38 + wind * 0.7),
+            fbm5(planeUv * 0.38 - wind * 0.5 + 4.3)
+          );
+          float cMain = fbm5(planeUv * 0.52 + warp * 0.55 + wind);
+          float cDetail = fbm5(planeUv * 1.45 - wind * 1.2 + cMain * 0.65);
+          float cHighCirrus = fbm5(planeUv * 0.26 + wind * 0.45 + 11.4);
 
-          // Sun/moon silver-lining vs thick dark convective undersides
-          float lightScatter = pow(max(sunAmt, moonAmt * 0.6), 5.0);
-          float billowShade = clamp((cloudShape - thresh) * 2.2, 0.0, 1.0);
-          vec3 litTop = uCloudColor * (1.0 + lightScatter * 0.42 * (1.0 - uCloudDarkness * 0.65));
-          vec3 baseBottom = uCloudColor * mix(0.62, 0.22, uCloudDarkness);
-          vec3 cloudFinal = mix(litTop, baseBottom, billowShade * (0.45 + uCloudDarkness * 0.5));
+          float cloudDensityField = mix(cMain, cDetail, 0.34);
+          float thresh = mix(0.66, 0.22, uCloudCoverage);
+          float cloudAlpha = smoothstep(thresh, thresh + 0.28, cloudDensityField);
+          // Add subtle high overcast stratus veil when heavily cloudy
+          float veilAlpha = smoothstep(0.32, 0.78, cHighCirrus) * smoothstep(0.45, 0.92, uCloudCoverage) * 0.55;
+          cloudAlpha = clamp(max(cloudAlpha, veilAlpha), 0.0, 1.0);
+          cloudAlpha *= smoothstep(0.006, 0.17, dir.y);
+
+          // Realistic cloud shading: silver-lined thin edges & sun/moon forward scatter vs heavy dark undersides
+          float forwardScatter = pow(max(sunAmt, moonAmt * 0.7), 6.0);
+          float edgeRim = (1.0 - smoothstep(thresh, thresh + 0.36, cloudDensityField)) * cloudAlpha;
+          float thickness = clamp((cloudDensityField - thresh) * 2.1, 0.0, 1.0);
+
+          vec3 litTop = uCloudColor * (0.98 + forwardScatter * 0.52 * (1.0 - uCloudDarkness * 0.55) + edgeRim * 0.22 * (1.0 - uCloudDarkness * 0.5));
+          vec3 heavyUnderbelly = uCloudColor * mix(0.68, 0.26, uCloudDarkness);
+          vec3 cloudFinal = mix(litTop, heavyUnderbelly, thickness * (0.42 + uCloudDarkness * 0.48));
 
           // Internal cloud-to-cloud sheet lightning glow during thunderstorms
           if (uLightningFlash > 0.01) {
-            float stormCell = smoothstep(0.45, 0.92, fbm(planeUv * 0.45 + 7.2));
-            cloudFinal += vec3(0.78, 0.88, 1.0) * uLightningFlash * (0.45 + stormCell * 1.35);
+            float stormCell = smoothstep(0.42, 0.90, fbm5(planeUv * 0.45 + 7.2));
+            cloudFinal += vec3(0.76, 0.87, 1.0) * uLightningFlash * (0.45 + stormCell * 1.35);
           }
 
-          col = mix(col, cloudFinal, cloudAlpha * mix(0.74, 0.96, uCloudCoverage));
+          col = mix(col, cloudFinal, cloudAlpha * mix(0.74, 0.98, uCloudCoverage));
         }
 
-        // Dense horizon fog lift (elevates mist naturally into sky dome during fog & heavy storms)
-        float horizonBlend = 1.0 - smoothstep(0.0, mix(0.14, 0.68, uFogHorizonLift), h);
-        col = mix(col, uHorizonColor, horizonBlend * (0.35 + uFogHorizonLift * 0.65));
+        // Horizon Mist / Fog Lift (seals horizon seamlessly into scene.fog)
+        float horizonBlend = 1.0 - smoothstep(0.0, mix(0.18, 0.78, uFogHorizonLift), h);
+        col = mix(col, uHorizonColor, horizonBlend * (0.48 + uFogHorizonLift * 0.52));
 
         gl_FragColor = vec4(col, 1.0);
       }
@@ -407,8 +450,8 @@ export function createAtmosphereSystem(
   skyMesh.scale.setScalar(900);
   group.add(skyMesh);
 
-  // 2. Twinkling Custom-Shader Starfield Dome (1,350 stars with brightness hierarchy & scintillation)
-  const starCount = 1350;
+  // 2. Clear-Sky Hero Beacon Stars (additive twinkle on crystal-clear nights only; faded out under clouds/fog)
+  const starCount = 320;
   const starPos = new Float32Array(starCount * 3);
   const starCol = new Float32Array(starCount * 3);
   const starSize = new Float32Array(starCount);
@@ -420,19 +463,19 @@ export function createAtmosphereSystem(
   };
   for (let i = 0; i < starCount; i++) {
     const theta = srnd() * Math.PI * 2;
-    const u = 0.04 + srnd() * 0.96;
+    const u = 0.08 + srnd() * 0.92;
     const r = Math.sqrt(Math.max(0, 1 - u * u));
     starPos[i * 3] = Math.cos(theta) * r;
     starPos[i * 3 + 1] = u;
     starPos[i * 3 + 2] = Math.sin(theta) * r;
 
-    const mag = Math.pow(srnd(), 2.1); // Realistic few bright beacons, many faint stars
-    const bright = 0.42 + mag * 0.58;
+    const mag = Math.pow(srnd(), 2.2);
+    const bright = 0.48 + mag * 0.52;
     const temp = srnd();
-    starCol[i * 3] = bright * (temp > 0.72 ? 1.0 : 0.84);
-    starCol[i * 3 + 1] = bright * 0.92;
-    starCol[i * 3 + 2] = bright * (temp < 0.35 ? 1.0 : 0.86);
-    starSize[i] = 1.6 + mag * 3.0;
+    starCol[i * 3] = bright * (temp > 0.72 ? 1.0 : 0.86);
+    starCol[i * 3 + 1] = bright * 0.93;
+    starCol[i * 3 + 2] = bright * (temp < 0.35 ? 1.0 : 0.88);
+    starSize[i] = 1.6 + mag * 2.4;
     starPhase[i] = srnd() * Math.PI * 2;
   }
   const starGeo = new THREE.BufferGeometry();
@@ -476,7 +519,7 @@ export function createAtmosphereSystem(
         vec2 p = gl_PointCoord - 0.5;
         float r = length(p) * 2.0;
         if (r >= 1.0) discard;
-        float core = exp(-r * r * 5.5);
+        float core = exp(-r * r * 6.0);
         float a = core * uOpacity * vTwinkle;
         if (a <= 0.01) discard;
         gl_FragColor = vec4(vColor * (1.0 + core * 0.45), a);
@@ -567,8 +610,8 @@ export function createAtmosphereSystem(
                        * (1.0 - smoothstep(coastLine - 14.0 + foamWave, coastLine + 4.0 + foamWave, p.x));
         col = mix(col, vec3(0.95, 0.99, 1.0), clamp(surfBand * 0.58 + whitecap, 0.0, 0.75));
 
-        float distFade = clamp(length(cameraPosition.xz - p) / 1700.0, 0.0, 1.0);
-        col = mix(col, uSkyColor, distFade * 0.85);
+        float distFade = clamp(length(cameraPosition.xz - p) / 1450.0, 0.0, 1.0);
+        col = mix(col, uSkyColor, distFade * 0.9);
 
         gl_FragColor = vec4(col, 0.96);
       }
@@ -579,30 +622,7 @@ export function createAtmosphereSystem(
   oceanMesh.position.y = SEA_LEVEL_Y;
   group.add(oceanMesh);
 
-  // 4. Elevated Midground Cumulus & Mountain Ridge Cloud Sprites
   const cloudSprites: THREE.Sprite[] = [];
-  const cloudMat = new THREE.SpriteMaterial({
-    map: cloudMap,
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.78,
-    depthWrite: false,
-  });
-
-  for (let i = 0; i < 36; i++) {
-    const sprite = new THREE.Sprite(cloudMat);
-    const angle = (i / 36) * Math.PI * 2;
-    const radius = 440 + (i % 4) * 125;
-    const clusterY = 128 + (i % 5) * 28;
-    sprite.position.set(
-      Math.cos(angle) * radius,
-      clusterY,
-      Math.sin(angle) * radius,
-    );
-    sprite.scale.set(240 + (i % 5) * 48, 92 + (i % 3) * 22, 1);
-    cloudSprites.push(sprite);
-    group.add(sprite);
-  }
 
   return {
     group,
@@ -641,7 +661,7 @@ export function createAtmosphereSystem(
         )
         .normalize();
 
-      // Lunar opposite orbital arc for crisp silver night directional shadows
+      // Lunar opposite orbital arc for subtle silver night directional rim & shadows
       _moonDir
         .set(
           -Math.cos(solarAngle) * 0.75,
@@ -673,7 +693,7 @@ export function createAtmosphereSystem(
       state.fogColor.copy(kfA.fog).lerp(kfB.fog, t);
       oceanUniforms.uDeepColor.value.copy(kfA.oceanDeep).lerp(kfB.oceanDeep, t);
       oceanUniforms.uShallowColor.value.copy(kfA.oceanShallow).lerp(kfB.oceanShallow, t);
-      cloudMat.color.copy(kfA.cloud).lerp(kfB.cloud, t);
+      skyUniforms.uCloudColor.value.copy(kfA.cloud).lerp(kfB.cloud, t);
 
       // Smooth day/night blend metrics
       const dayVis = THREE.MathUtils.smoothstep(rawSunY, -0.06, 0.14);
@@ -681,96 +701,117 @@ export function createAtmosphereSystem(
       const goldenBand =
         1.0 - THREE.MathUtils.smoothstep(Math.abs(rawSunY), 0.0, 0.28);
 
-      // Distinct per-weather atmospheric profiles
-      let cloudCoverage = 0.24;
+      // Distinct per-weather atmospheric & sky profiles
+      let cloudCoverage = 0.22;
       let cloudDarkness = 0.0;
-      let fogHorizonLift = 0.0;
+      let fogHorizonLift = 0.08 * nightFactor;
       let weatherMute = 0.0;
       let stormChop = 0.0;
+      let directKeyAtten = 1.0;
 
       if (weather === 'cloudy') {
-        cloudCoverage = 0.80;
-        cloudDarkness = 0.34;
-        fogHorizonLift = 0.10;
-        weatherMute = 0.64;
-        stormChop = 0.22;
+        cloudCoverage = 0.85;
+        cloudDarkness = 0.42;
+        fogHorizonLift = 0.22;
+        weatherMute = 0.78;
+        stormChop = 0.24;
+        directKeyAtten = 0.26; // Soft diffused overcast light, no harsh sunlight shadows
         if (nightFactor > 0.5) {
-          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.65);
-          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.65);
-          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.65);
-          state.fogColor.lerp(_nightFogMist, 0.6);
+          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.78);
+          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.78);
+          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.78);
+          state.fogColor.lerp(_nightFogMist, 0.78);
+          state.hemiSkyColor.lerp(_nightOvercastHemiSky, 0.75);
+          state.hemiGroundColor.lerp(_nightOvercastHemiGround, 0.75);
         } else {
-          skyUniforms.uTopColor.value.lerp(_cloudyTop, 0.72);
-          skyUniforms.uMidColor.value.lerp(_cloudyMid, 0.72);
-          skyUniforms.uHorizonColor.value.lerp(_cloudyHor, 0.72);
-          state.fogColor.lerp(_cloudyFog, 0.7);
+          skyUniforms.uTopColor.value.lerp(_cloudyTop, 0.84);
+          skyUniforms.uMidColor.value.lerp(_cloudyMid, 0.84);
+          skyUniforms.uHorizonColor.value.lerp(_cloudyHor, 0.84);
+          state.fogColor.lerp(_cloudyFog, 0.84);
+          state.hemiSkyColor.lerp(_cloudyHemiSky, 0.78);
+          state.hemiGroundColor.lerp(_cloudyHemiGround, 0.75);
         }
       } else if (weather === 'fog') {
-        cloudCoverage = 0.72;
-        cloudDarkness = 0.22;
-        fogHorizonLift = 0.88;
-        weatherMute = 0.84;
-        stormChop = 0.08;
+        cloudCoverage = 0.78;
+        cloudDarkness = 0.26;
+        fogHorizonLift = 0.96;
+        weatherMute = 0.92;
+        stormChop = 0.06;
+        directKeyAtten = 0.10; // Heavy mist scatters sunlight almost completely
         if (nightFactor > 0.5) {
-          skyUniforms.uTopColor.value.lerp(_nightFogMist, 0.88);
-          skyUniforms.uMidColor.value.lerp(_nightFogMist, 0.90);
-          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.88);
-          state.fogColor.lerp(_nightFogMist, 0.90);
+          skyUniforms.uTopColor.value.lerp(_nightFogMist, 0.92);
+          skyUniforms.uMidColor.value.lerp(_nightFogMist, 0.94);
+          skyUniforms.uHorizonColor.value.lerp(_nightFogMist, 0.96);
+          state.fogColor.lerp(_nightFogMist, 0.96);
+          state.hemiSkyColor.lerp(_nightOvercastHemiSky, 0.88);
+          state.hemiGroundColor.lerp(_nightOvercastHemiGround, 0.88);
         } else {
-          skyUniforms.uTopColor.value.lerp(_fogDayTop, 0.84);
-          skyUniforms.uMidColor.value.lerp(_fogDayMid, 0.86);
-          skyUniforms.uHorizonColor.value.lerp(_fogDayHor, 0.90);
-          state.fogColor.lerp(_fogDayFog, 0.90);
+          skyUniforms.uTopColor.value.lerp(_fogDayTop, 0.90);
+          skyUniforms.uMidColor.value.lerp(_fogDayMid, 0.92);
+          skyUniforms.uHorizonColor.value.lerp(_fogDayHor, 0.95);
+          state.fogColor.lerp(_fogDayFog, 0.95);
+          state.hemiSkyColor.lerp(_fogDayHemiSky, 0.86);
+          state.hemiGroundColor.lerp(_fogDayHemiGround, 0.82);
         }
       } else if (weather === 'rain') {
-        cloudCoverage = 0.87;
-        cloudDarkness = 0.62;
-        fogHorizonLift = 0.24;
-        weatherMute = 0.78;
+        cloudCoverage = 0.88;
+        cloudDarkness = 0.64;
+        fogHorizonLift = 0.30;
+        weatherMute = 0.82;
         stormChop = 0.55;
+        directKeyAtten = 0.20;
         if (nightFactor > 0.5) {
-          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.8);
-          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.8);
-          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.8);
-          state.fogColor.lerp(_nightFogMist, 0.8);
+          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.86);
+          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.86);
+          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.86);
+          state.fogColor.lerp(_nightFogMist, 0.86);
+          state.hemiSkyColor.lerp(_nightOvercastHemiSky, 0.85);
+          state.hemiGroundColor.lerp(_nightOvercastHemiGround, 0.85);
         } else {
-          skyUniforms.uTopColor.value.lerp(_rainTop, 0.82);
-          skyUniforms.uMidColor.value.lerp(_rainMid, 0.82);
-          skyUniforms.uHorizonColor.value.lerp(_rainHor, 0.82);
-          state.fogColor.lerp(_rainFog, 0.82);
+          skyUniforms.uTopColor.value.lerp(_rainTop, 0.86);
+          skyUniforms.uMidColor.value.lerp(_rainMid, 0.86);
+          skyUniforms.uHorizonColor.value.lerp(_rainHor, 0.86);
+          state.fogColor.lerp(_rainFog, 0.86);
+          state.hemiSkyColor.lerp(_cloudyHemiSky, 0.82);
+          state.hemiGroundColor.lerp(_cloudyHemiGround, 0.82);
         }
       } else if (weather === 'heavy_rain' || weather === 'thunderstorm') {
         const isStorm = weather === 'thunderstorm';
         cloudCoverage = isStorm ? 0.96 : 0.92;
         cloudDarkness = isStorm ? 0.94 : 0.80;
-        fogHorizonLift = isStorm ? 0.40 : 0.34;
-        weatherMute = isStorm ? 0.92 : 0.86;
+        fogHorizonLift = isStorm ? 0.44 : 0.38;
+        weatherMute = isStorm ? 0.94 : 0.88;
         stormChop = isStorm ? 1.0 : 0.82;
+        directKeyAtten = isStorm ? 0.12 : 0.16;
         if (nightFactor > 0.5) {
-          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.92);
-          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.92);
-          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.92);
-          state.fogColor.lerp(_nightFogMist, 0.9);
+          skyUniforms.uTopColor.value.lerp(_nightOvercastTop, 0.94);
+          skyUniforms.uMidColor.value.lerp(_nightOvercastMid, 0.94);
+          skyUniforms.uHorizonColor.value.lerp(_nightOvercastHor, 0.94);
+          state.fogColor.lerp(_nightFogMist, 0.94);
+          state.hemiSkyColor.lerp(_nightOvercastHemiSky, 0.9);
+          state.hemiGroundColor.lerp(_nightOvercastHemiGround, 0.9);
         } else {
           skyUniforms.uTopColor.value.lerp(_stormTop, weatherMute);
           skyUniforms.uMidColor.value.lerp(_stormMid, weatherMute);
           skyUniforms.uHorizonColor.value.lerp(_stormHor, weatherMute);
           state.fogColor.lerp(_stormFog, weatherMute);
+          state.hemiSkyColor.lerp(_cloudyHemiSky, 0.85);
+          state.hemiGroundColor.lerp(_cloudyHemiGround, 0.88);
         }
       }
 
       if (weatherMute > 0) {
         oceanUniforms.uDeepColor.value.lerp(
           nightFactor > 0.5 ? _nightOceanDeep : _overcastOceanDeep,
-          weatherMute * 0.84,
+          weatherMute * 0.86,
         );
         oceanUniforms.uShallowColor.value.lerp(
           nightFactor > 0.5 ? _nightOceanShallow : _overcastOceanShallow,
-          weatherMute * 0.84,
-        );
-        cloudMat.color.lerp(
-          nightFactor > 0.5 ? _nightOvercastCloud : _overcastCloud,
           weatherMute * 0.86,
+        );
+        skyUniforms.uCloudColor.value.lerp(
+          nightFactor > 0.5 ? _nightOvercastCloud : _overcastCloud,
+          weatherMute * 0.88,
         );
       }
 
@@ -781,50 +822,64 @@ export function createAtmosphereSystem(
         state.fogColor.lerp(_lightningFogFlash, flashTint * 0.36);
       }
 
+      // Keep distant fog slightly darker than sky horizon at clear night so mountains form crisp dark silhouettes
+      if (nightFactor > 0.5 && weather === 'sunny') {
+        state.fogColor.lerp(_nightFogMist, 0.28);
+      }
+
       oceanUniforms.uSkyColor.value.copy(skyUniforms.uHorizonColor.value);
       oceanUniforms.uStormChop.value = stormChop;
       oceanUniforms.uLightningFlash.value = lightningFlash;
 
-      skyUniforms.uCloudColor.value.copy(cloudMat.color);
       skyUniforms.uCloudCoverage.value = cloudCoverage;
       skyUniforms.uCloudDarkness.value = cloudDarkness;
       skyUniforms.uFogHorizonLift.value = fogHorizonLift;
       skyUniforms.uLightningFlash.value = lightningFlash;
 
-      // Active directional light smoothly transitions between Sun (day) and crisp silver Moon (night)
+      // Active directional light smoothly transitions between Sun (day) and subtle silver Moon (night)
       const useMoon = rawSunY < 0.03;
       if (useMoon) {
         sunDirection.copy(_moonDir);
         state.keyColor.copy(_moonLightColor);
         const moonWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, -0.14);
         state.keyIntensity =
-          THREE.MathUtils.lerp(0.24, 0.16, moonWeight) * (1 - weatherMute * 0.72);
+          THREE.MathUtils.lerp(0.14, 0.072, moonWeight) * directKeyAtten;
       } else {
         sunDirection.copy(_sunTrueDir);
         state.keyColor.copy(skyUniforms.uSunColor.value);
         const sunWeight = THREE.MathUtils.smoothstep(rawSunY, 0.03, 0.24);
         state.keyIntensity =
-          THREE.MathUtils.lerp(0.55, 2.58, sunWeight) * (1 - weatherMute * 0.58);
+          THREE.MathUtils.lerp(0.52, 2.58, sunWeight) * directKeyAtten;
       }
 
       state.keyDirection.copy(sunDirection);
       state.sunElevation = rawSunY;
       state.nightFactor = nightFactor;
-      state.dayFactor = dayVis * (1 - weatherMute * 0.48);
+      state.dayFactor = dayVis * (1 - weatherMute * 0.52);
 
-      // Balanced atmospheric ambient & reflections at night (never crushed black)
-      state.hemiIntensity =
-        THREE.MathUtils.lerp(0.68, 0.145, nightFactor) *
-        (weather === 'fog' ? 1.12 : 1 - weatherMute * 0.18);
+      // Authentic atmospheric ambient & environment intensities (truly dark night vs soft overcast/fog)
+      const baseHemi = THREE.MathUtils.lerp(0.68, 0.052, nightFactor);
+      const weatherHemiMult =
+        weather === 'fog'
+          ? THREE.MathUtils.lerp(0.72, 0.85, nightFactor)
+          : weather === 'cloudy'
+            ? THREE.MathUtils.lerp(0.84, 0.78, nightFactor)
+            : 1 - weatherMute * 0.25;
+      state.hemiIntensity = baseHemi * weatherHemiMult;
+
+      // Environment intensity pairs with dayEnvTex / overcastEnvTex / nightEnvTex in GameEngine
       state.envIntensity =
-        THREE.MathUtils.lerp(1.08, 0.22, nightFactor) *
-        (1 - weatherMute * 0.28);
+        nightFactor > 0.45
+          ? THREE.MathUtils.lerp(0.55, 0.42, nightFactor) * (1 - weatherMute * 0.25)
+          : THREE.MathUtils.lerp(1.06, 0.65, weatherMute);
+
       state.exposure =
-        THREE.MathUtils.lerp(1.04, 0.88, nightFactor) -
+        THREE.MathUtils.lerp(1.04, 0.80, nightFactor) -
         goldenBand * 0.05 -
-        (weather === 'thunderstorm' ? 0.06 : 0);
+        (weather === 'fog' ? 0.06 : weather === 'thunderstorm' ? 0.08 : 0);
+
       state.bloomStrength = Math.max(
-        nightFactor * 0.42,
+        nightFactor * 0.46,
         goldenBand * 0.14,
         lightningFlash * 0.55,
       );
@@ -842,15 +897,19 @@ export function createAtmosphereSystem(
       // Sky, stars & ocean uniforms
       skyUniforms.uSunDir.value.copy(_sunTrueDir);
       skyUniforms.uMoonDir.value.copy(_moonDir);
-      skyUniforms.uSunStrength.value = dayVis * (1 - weatherMute * 0.86);
-      skyUniforms.uMoonStrength.value = nightFactor * (1 - weatherMute * 0.90);
+      skyUniforms.uSunStrength.value = dayVis * (1 - weatherMute * 0.88);
+      skyUniforms.uMoonStrength.value = nightFactor * (1 - weatherMute * 0.92);
 
-      // Stars fade realistically behind cloud cover and fog
-      const cloudStarAtten = 1 - Math.max(weatherMute, (cloudCoverage - 0.24) * 1.15);
+      // Procedural stars in skyMat (occluded dynamically by clouds) + clear-night hero beacons
+      const fogStarAtten = 1 - fogHorizonLift * 0.95;
+      skyUniforms.uStarVisibility.value =
+        Math.max(0, (nightFactor - 0.08) / 0.92) * Math.max(0, fogStarAtten);
+
+      const clearSkyStarAtten = 1 - Math.max(weatherMute * 1.15, (cloudCoverage - 0.22) * 1.6);
       starUniforms.uOpacity.value =
-        Math.max(0, (nightFactor - 0.12) / 0.88) *
+        Math.max(0, (nightFactor - 0.14) / 0.86) *
         0.95 *
-        Math.max(0.0, Math.min(1.0, cloudStarAtten));
+        Math.max(0.0, Math.min(1.0, clearSkyStarAtten));
       starPoints.visible = starUniforms.uOpacity.value > 0.02;
 
       oceanUniforms.uSunDir.value.copy(useMoon ? _moonDir : _sunTrueDir);
@@ -858,21 +917,8 @@ export function createAtmosphereSystem(
         useMoon ? _moonLightColor : skyUniforms.uSunColor.value,
       );
       oceanUniforms.uSunStrength.value = useMoon
-        ? 0.36 * nightFactor * (1 - weatherMute * 0.82)
+        ? 0.32 * nightFactor * (1 - weatherMute * 0.86)
         : skyUniforms.uSunStrength.value;
-
-      cloudMat.opacity =
-        THREE.MathUtils.lerp(0.84, 0.22, nightFactor) * (1 - fogHorizonLift * 0.35) +
-        weatherMute * 0.14;
-
-      const maxCloudDist = Math.max(360, cameraFar * 0.64);
-      for (let i = 0; i < cloudSprites.length; i++) {
-        const speedMul = weather === 'thunderstorm' ? 0.0055 : 0.0026;
-        const angle = (i / cloudSprites.length) * Math.PI * 2 + timeSec * speedMul;
-        const radius = Math.min(maxCloudDist, 430 + (i % 4) * 115);
-        cloudSprites[i].position.x = playerX + Math.cos(angle) * radius;
-        cloudSprites[i].position.z = playerZ + Math.sin(angle) * radius;
-      }
     },
     dispose: () => {
       skyGeo.dispose();
@@ -881,7 +927,6 @@ export function createAtmosphereSystem(
       starMat.dispose();
       oceanGeo.dispose();
       oceanMat.dispose();
-      cloudMat.dispose();
     },
   };
 }

@@ -325,6 +325,16 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                   strokeWidth={14}
                   strokeLinejoin="round"
                 />
+                {(telemetry.trafficPositions ?? []).map((tp, i) => (
+                  <circle
+                    key={`tr-${i}`}
+                    cx={-tp.x}
+                    cy={-tp.z}
+                    r={5.5}
+                    fill="#38bdf8"
+                    fillOpacity={0.85}
+                  />
+                ))}
                 {telemetry.opponents.map((op, i) => (
                   <circle
                     key={i}

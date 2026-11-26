@@ -12,6 +12,8 @@ export type TransmissionMode = 'auto' | 'manual';
 
 export type CameraMode = 'chase' | 'far' | 'hood' | 'cockpit' | 'bumper' | 'cinematic';
 
+export type TrafficDensity = 'off' | 'low' | 'normal' | 'high';
+
 export type WeatherType =
   | 'sunny'
   | 'cloudy'
@@ -175,6 +177,8 @@ export interface GameSettings {
   radioStation: RadioStationId;
   muted: boolean;
   cameraShake: boolean;
+  motionBlur: boolean;
+  trafficDensity: TrafficDensity;
   autoFullscreen: boolean;
   units: 'KMH' | 'MPH';
 }
@@ -316,6 +320,7 @@ export interface LiveTelemetry {
   crashFlash: number;
   noBrakeDriftSec: number;
   opponents: Array<{ x: number; z: number; name: string }>;
+  trafficPositions: Array<{ x: number; z: number }>;
 }
 
 export interface ControlInputState {

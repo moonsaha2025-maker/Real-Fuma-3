@@ -4,6 +4,7 @@ import {
   ControlScheme,
   GameSettings,
   GraphicsPreset,
+  TrafficDensity,
   TransmissionMode,
 } from '../types/game';
 import { audioEngine } from '../engine/audio';
@@ -118,6 +119,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 {settings.cameraShake ? 'ON' : 'OFF'}
               </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-display text-slate-300">
+                SPEED & RAIN MOTION BLUR
+              </span>
+              <button
+                onClick={() =>
+                  update({ motionBlur: !(settings.motionBlur ?? true) })
+                }
+                className={`px-3 py-1 text-xs font-display border cursor-pointer ${
+                  (settings.motionBlur ?? true)
+                    ? 'bg-rose-600 border-rose-500 text-white font-bold'
+                    : 'bg-slate-900 border-slate-800 text-slate-400'
+                }`}
+              >
+                {(settings.motionBlur ?? true) ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <div className="text-xs font-display text-slate-300">
+                HIGHWAY TRAFFIC DENSITY
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(['off', 'low', 'normal', 'high'] as TrafficDensity[]).map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => update({ trafficDensity: d })}
+                    className={`py-1.5 text-[11px] font-display uppercase border cursor-pointer ${
+                      (settings.trafficDensity ?? 'normal') === d
+                        ? 'bg-rose-600 border-rose-500 text-white font-bold'
+                        : 'bg-slate-900 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex items-center justify-between">

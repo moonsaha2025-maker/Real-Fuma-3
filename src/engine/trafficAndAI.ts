@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CAR_CATALOG, getDefaultCustomization } from '../data/cars';
 import { getRoadPointAt, TRACK_LENGTH_M } from '../data/track';
+import { PaintFinish, TrafficDensity } from '../types/game';
 import { CarModelRig, createCarModel } from './carModel';
 import { VehiclePhysicsState } from './physics';
 
@@ -11,11 +12,38 @@ const _roadNormal = new THREE.Vector3();
 const _qSurface = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
 
+const INNER_LANE_OFFSET = 2.15;
+const OUTER_LANE_OFFSET = 5.15;
+
+const DENSITY_COUNTS: Record<TrafficDensity, number> = {
+  off: 0,
+  low: 12,
+  normal: 24,
+  high: 36,
+};
+
+const TRAFFIC_PAINTS = [
+  '#dc2626',
+  '#cbd5e1',
+  '#f59e0b',
+  '#0f172a',
+  '#e2e8f0',
+  '#38bdf8',
+  '#10b981',
+  '#6366f1',
+  '#f97316',
+  '#475569',
+];
+
+const TRAFFIC_FINISHES: PaintFinish[] = ['metallic', 'gloss', 'metallic', 'matte'];
+
 export interface TrafficAgent {
   carRig: CarModelRig;
   s: number; // 0..1 spline progress
   lateralOffset: number;
   baseLateral: number;
+  targetLateral: number;
+  laneChangeCooldown: number;
   dir: 1 | -1;
   speedMs: number;
   baseSpeedMs: number;
@@ -63,58 +91,146 @@ export class TrafficAndAIManager {
   public traffic: TrafficAgent[] = [];
   public racers: RaceAIAgent[] = [];
   private sharedContactShadow?: THREE.Texture;
+  private density: TrafficDensity = 'normal';
+  private spawnSerial = 0;
 
-  constructor(contactShadow?: THREE.Texture) {
+  constructor(contactShadow?: THREE.Texture, initialDensity: TrafficDensity = 'normal') {
     this.sharedContactShadow = contactShadow;
-    this.spawnLoopTraffic();
+    this.setTrafficDensity(initialDensity);
   }
 
-  private spawnLoopTraffic(): void {
-    const paints = ['#dc2626', '#cbd5e1', '#f59e0b', '#0f172a', '#e2e8f0', '#38bdf8'];
-    const count = 14;
-
-    for (let i = 0; i < count; i++) {
-      const spec = CAR_CATALOG[(i % (CAR_CATALOG.length - 1)) + 1];
-      const cust = getDefaultCustomization(spec);
-      cust.paintColor = paints[i % paints.length];
-      cust.paintFinish = 'metallic';
-      cust.spoiler = i % 3 === 0 ? 'gt_wing' : 'lip';
-
-      const rig = createCarModel(spec, cust, {
-        contactShadowMap: this.sharedContactShadow,
-        lightweight: true,
-      });
-      this.group.add(rig.root);
-
-      const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-      const s = (0.12 + i / count) % 1;
-      const lateralOffset = dir === 1 ? 3.5 : -3.5;
-      const pt = getRoadPointAt(s, lateralOffset);
-      const heading = dir === 1 ? pt.heading : pt.heading + Math.PI;
-      const baseSpeedMs = 22 + (i % 4) * 3.5;
-
-      rig.root.position.set(pt.x, pt.y, pt.z);
-      rig.root.rotation.y = heading;
-
-      this.traffic.push({
-        carRig: rig,
-        s,
-        lateralOffset,
-        baseLateral: lateralOffset,
-        dir,
-        speedMs: baseSpeedMs,
-        baseSpeedMs,
-        massKg: spec.massKg,
-        x: pt.x,
-        y: pt.y,
-        z: pt.z,
-        heading,
-        hitYawOffset: 0,
-        hitSpinVel: 0,
-        hitRoll: 0,
-        hitTimer: 0,
-      });
+  public setTrafficDensity(density: TrafficDensity): void {
+    const targetCount = DENSITY_COUNTS[density] ?? DENSITY_COUNTS.normal;
+    if (this.density === density && this.traffic.length === targetCount) {
+      return;
     }
+    this.density = density;
+
+    // Trim excess vehicles cleanly with GPU resource disposal
+    while (this.traffic.length > targetCount) {
+      const removed = this.traffic.pop();
+      if (removed) {
+        this.group.remove(removed.carRig.root);
+        removed.carRig.dispose();
+      }
+    }
+
+    if (targetCount === 0) return;
+
+    // If growing from empty or adding slots, spawn remaining vehicles spread evenly across the loop
+    const existingCount = this.traffic.length;
+    const needed = targetCount - existingCount;
+    for (let k = 0; k < needed; k++) {
+      const slotIndex = existingCount + k;
+      this.spawnSingleTrafficAgent(slotIndex, targetCount);
+    }
+  }
+
+  private spawnSingleTrafficAgent(slotIndex: number, totalTarget: number): void {
+    const seed = this.spawnSerial++;
+    const spec = CAR_CATALOG[(seed % (CAR_CATALOG.length - 1)) + 1];
+    const cust = getDefaultCustomization(spec);
+    cust.paintColor = TRAFFIC_PAINTS[seed % TRAFFIC_PAINTS.length];
+    cust.paintFinish = TRAFFIC_FINISHES[seed % TRAFFIC_FINISHES.length];
+    cust.spoiler = seed % 4 === 0 ? 'gt_wing' : seed % 2 === 0 ? 'lip' : 'none';
+
+    const rig = createCarModel(spec, cust, {
+      contactShadowMap: this.sharedContactShadow,
+      lightweight: true,
+    });
+    this.group.add(rig.root);
+
+    const dir: 1 | -1 = slotIndex % 2 === 0 ? 1 : -1;
+    const isFastLane = Math.floor(slotIndex / 2) % 2 === 0;
+    const laneMag = isFastLane ? INNER_LANE_OFFSET : OUTER_LANE_OFFSET;
+    const lateralOffset = dir * laneMag;
+
+    // Evenly distribute around the 3.8 km highway loop with slight deterministic stagger
+    const stagger = ((seed * 37) % 100) * 0.0008;
+    const s = (0.11 + slotIndex / Math.max(1, totalTarget) + stagger) % 1;
+    const pt = getRoadPointAt(s, lateralOffset);
+    const heading = dir === 1 ? pt.heading : pt.heading + Math.PI;
+    const baseSpeedMs = isFastLane
+      ? 27.5 + (seed % 4) * 2.1 // ~99 - 122 km/h inner lane
+      : 19.5 + (seed % 4) * 1.8; // ~70 - 90 km/h outer cruising lane
+
+    rig.root.position.set(pt.x, pt.y, pt.z);
+    rig.root.rotation.y = heading;
+
+    this.traffic.push({
+      carRig: rig,
+      s,
+      lateralOffset,
+      baseLateral: lateralOffset,
+      targetLateral: lateralOffset,
+      laneChangeCooldown: 1.5 + (seed % 5) * 0.7,
+      dir,
+      speedMs: baseSpeedMs,
+      baseSpeedMs,
+      massKg: spec.massKg,
+      x: pt.x,
+      y: pt.y,
+      z: pt.z,
+      heading,
+      hitYawOffset: 0,
+      hitSpinVel: 0,
+      hitRoll: 0,
+      hitTimer: 0,
+    });
+  }
+
+  private isLaneWindowClear(
+    selfIdx: number,
+    dir: 1 | -1,
+    s: number,
+    candidateLateral: number,
+    behindM: number,
+    aheadM: number,
+    player: VehiclePhysicsState,
+  ): boolean {
+    const halfLen = TRACK_LENGTH_M * 0.5;
+    for (let j = 0; j < this.traffic.length; j++) {
+      if (j === selfIdx) continue;
+      const other = this.traffic[j];
+      if (other.dir !== dir) continue;
+      if (
+        Math.abs(other.lateralOffset - candidateLateral) > 2.2 &&
+        Math.abs(other.targetLateral - candidateLateral) > 2.2
+      ) {
+        continue;
+      }
+      let signedDs = dir === 1 ? other.s - s : s - other.s;
+      signedDs = ((signedDs % 1) + 1) % 1;
+      let signedM = signedDs * TRACK_LENGTH_M;
+      if (signedM > halfLen) signedM -= TRACK_LENGTH_M;
+      if (signedM >= -behindM && signedM <= aheadM) {
+        return false;
+      }
+    }
+
+    // Ensure player isn't sitting directly in the target lane right beside this car
+    const self = this.traffic[selfIdx];
+    const pdx = player.x - self.x;
+    const pdz = player.z - self.z;
+    if (pdx * pdx + pdz * pdz < 26 * 26) {
+      const sinH = Math.sin(self.heading);
+      const cosH = Math.cos(self.heading);
+      const fwdDist = pdx * sinH + pdz * cosH;
+      const lateralShift = candidateLateral - self.lateralOffset;
+      const rightX = -cosH;
+      const rightZ = sinH;
+      const playerSideDist = pdx * rightX + pdz * rightZ;
+      const signedLatDelta = lateralShift * self.dir;
+      if (
+        fwdDist > -10 &&
+        fwdDist < 22 &&
+        Math.abs(playerSideDist - signedLatDelta) < 2.6
+      ) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   public clearRacers(): void {
@@ -297,12 +413,65 @@ export class TrafficAndAIManager {
   ): { collisionImpact: number } {
     let collisionImpact = 0;
 
-    // 1. Update Free-Roam Sports Traffic (hidden during timed races for clean racing lines)
+    // 1. Update Free-Roam Highway NPC Traffic (hidden during timed races for clean racing lines)
     const showTraffic = this.racers.length === 0;
-    for (const t of this.traffic) {
+    const trafficCount = this.traffic.length;
+    for (let i = 0; i < trafficCount; i++) {
+      const t = this.traffic[i];
       if (!showTraffic) {
         t.carRig.root.visible = false;
         continue;
+      }
+
+      if (t.laneChangeCooldown > 0) {
+        t.laneChangeCooldown = Math.max(0, t.laneChangeCooldown - dt);
+      }
+
+      const prevPt = getRoadPointAt(t.s, t.lateralOffset);
+      const cornerSlow = Math.max(
+        0.66,
+        1 - Math.abs(prevPt.station.curvature) * 0.34,
+      );
+      const desiredCruise = t.baseSpeedMs * cornerSlow;
+
+      // Scan same-direction cars ahead in this lane
+      let nearestGapM = 999;
+      let aheadSpeedMs = desiredCruise;
+
+      for (let j = 0; j < trafficCount; j++) {
+        if (j === i) continue;
+        const other = this.traffic[j];
+        if (other.dir !== t.dir) continue;
+        if (
+          Math.abs(other.lateralOffset - t.lateralOffset) > 2.15 &&
+          Math.abs(other.targetLateral - t.lateralOffset) > 2.15
+        ) {
+          continue;
+        }
+        const rawDs = t.dir === 1 ? (other.s - t.s + 1) % 1 : (t.s - other.s + 1) % 1;
+        const gapM = rawDs * TRACK_LENGTH_M;
+        if (gapM > 0.2 && gapM < nearestGapM) {
+          nearestGapM = gapM;
+          aheadSpeedMs = other.speedMs;
+        }
+      }
+
+      // Check if player is directly ahead in our exact lane (ignore oncoming or adjacent lanes)
+      const pdx = player.x - t.x;
+      const pdz = player.z - t.z;
+      const distToPlayer = Math.hypot(pdx, pdz);
+      let isBraking = false;
+      let targetSpeed = desiredCruise;
+
+      if (distToPlayer < 42 && t.hitTimer <= 0) {
+        const sinH = Math.sin(t.heading);
+        const cosH = Math.cos(t.heading);
+        const fwdGap = pdx * sinH + pdz * cosH;
+        const sideOffset = Math.abs(-cosH * pdx + sinH * pdz);
+        if (fwdGap > 1.8 && fwdGap < 38 && sideOffset < 2.25 && fwdGap < nearestGapM) {
+          nearestGapM = fwdGap;
+          aheadSpeedMs = Math.max(0, player.vx * sinH + player.vz * cosH);
+        }
       }
 
       if (t.hitTimer > 0) {
@@ -311,24 +480,79 @@ export class TrafficAndAIManager {
         t.hitSpinVel *= Math.exp(-5.5 * dt);
         t.hitYawOffset *= Math.exp(-3.2 * dt);
         t.hitRoll *= Math.exp(-4.5 * dt);
-        t.lateralOffset += (t.baseLateral - t.lateralOffset) * Math.min(1, dt * 1.4);
+        t.lateralOffset += (t.targetLateral - t.lateralOffset) * Math.min(1, dt * 1.8);
         t.speedMs += (t.baseSpeedMs - t.speedMs) * Math.min(1, dt * 1.2);
+        isBraking = true;
       } else {
         t.hitYawOffset = 0;
         t.hitRoll = 0;
+
+        // Overtake / lane-change logic when approaching a slower vehicle ahead
+        if (nearestGapM < 36 && aheadSpeedMs < desiredCruise - 1.8) {
+          if (t.laneChangeCooldown <= 0) {
+            const isCurrentlyInner = Math.abs(t.targetLateral) < 3.6;
+            const altLateral =
+              t.dir * (isCurrentlyInner ? OUTER_LANE_OFFSET : INNER_LANE_OFFSET);
+            if (
+              this.isLaneWindowClear(i, t.dir, t.s, altLateral, 15, 38, player)
+            ) {
+              t.targetLateral = altLateral;
+              t.laneChangeCooldown = 4.2 + (i % 4) * 1.1;
+            }
+          }
+
+          if (nearestGapM < 9.5) {
+            targetSpeed = Math.max(0.5, aheadSpeedMs * 0.52);
+            isBraking = true;
+          } else if (nearestGapM < 34) {
+            const blend = THREE.MathUtils.clamp((nearestGapM - 9.5) / 24.5, 0, 1);
+            targetSpeed = THREE.MathUtils.lerp(
+              Math.max(2.0, aheadSpeedMs * 0.92),
+              desiredCruise,
+              blend,
+            );
+            isBraking = targetSpeed < t.speedMs - 1.1 || nearestGapM < 19;
+          }
+        } else if (
+          Math.abs(t.targetLateral - t.baseLateral) > 0.25 &&
+          t.laneChangeCooldown <= 0
+        ) {
+          // Return smoothly to home cruising lane once clear
+          if (
+            this.isLaneWindowClear(i, t.dir, t.s, t.baseLateral, 14, 34, player)
+          ) {
+            t.targetLateral = t.baseLateral;
+            t.laneChangeCooldown = 3.5;
+          }
+        }
+
+        const speedRate = targetSpeed < t.speedMs ? 4.8 : 2.1;
+        t.speedMs += (targetSpeed - t.speedMs) * Math.min(1, dt * speedRate);
+
+        // Hard minimum bumper floor against other same-lane NPCs so traffic never stacks
+        if (nearestGapM < 6.8 && t.speedMs > aheadSpeedMs) {
+          t.speedMs = Math.max(0.5, aheadSpeedMs * 0.85);
+          isBraking = true;
+        }
       }
 
-      const distToPlayer = Math.hypot(player.x - t.x, player.z - t.z);
-      const speedMod = distToPlayer < 16 && t.hitTimer <= 0 ? 0.38 : 1.0;
+      // Smooth lateral lane transition + visual lane-change steering angle
+      const latDelta = t.targetLateral - t.lateralOffset;
+      const latMove = THREE.MathUtils.clamp(latDelta * 2.8, -3.2, 3.2);
+      t.lateralOffset += latMove * dt;
+      const laneSteerVisual = THREE.MathUtils.clamp((latMove * t.dir) / 9.5, -0.22, 0.22);
 
-      t.s = (t.s + (t.dir * t.speedMs * speedMod * dt) / TRACK_LENGTH_M + 1) % 1;
+      t.s = (t.s + (t.dir * t.speedMs * dt) / TRACK_LENGTH_M + 1) % 1;
       const pt = getRoadPointAt(t.s, t.lateralOffset);
       t.x = pt.x;
       t.y = pt.y;
       t.z = pt.z;
-      t.heading = (t.dir === 1 ? pt.heading : pt.heading + Math.PI) + t.hitYawOffset;
+      t.heading =
+        (t.dir === 1 ? pt.heading : pt.heading + Math.PI) +
+        t.hitYawOffset +
+        laneSteerVisual * 0.35;
 
-      const inRange = distToPlayer < 460;
+      const inRange = distToPlayer < 480;
       t.carRig.root.visible = inRange;
       if (inRange) {
         t.carRig.root.position.set(t.x, t.y, t.z);
@@ -344,9 +568,13 @@ export class TrafficAndAIManager {
         _qYaw.setFromAxisAngle(_worldUp, t.heading);
         t.carRig.root.quaternion.copy(_qSurface).multiply(_qYaw);
 
-        t.carRig.setBodyTilt(0, t.hitRoll, 0);
-        t.carRig.setWheels(0, (t.speedMs * speedMod / 0.35) * dt);
-        t.carRig.setLights(headlightsOn, speedMod < 0.6 || t.hitTimer > 0, false);
+        t.carRig.setBodyTilt(
+          isBraking ? -0.018 : 0,
+          t.hitRoll + laneSteerVisual * 0.14,
+          0,
+        );
+        t.carRig.setWheels(laneSteerVisual, (t.speedMs / 0.35) * dt);
+        t.carRig.setLights(headlightsOn, isBraking, false);
       }
 
       if (distToPlayer < 3.55) {
@@ -383,7 +611,10 @@ export class TrafficAndAIManager {
         r.hitRoll = 0;
       }
 
-      const cornerSlow = Math.max(0.62, 1 - Math.abs(getRoadPointAt(r.s, 0).station.curvature) * 0.38);
+      const cornerSlow = Math.max(
+        0.62,
+        1 - Math.abs(getRoadPointAt(r.s, 0).station.curvature) * 0.38,
+      );
       const targetSpeed = r.maxSpeedMs * cornerSlow;
       r.speedMs += (targetSpeed - r.speedMs) * Math.min(1, dt * 1.8);
 

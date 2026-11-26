@@ -87,6 +87,7 @@ const INITIAL_TELEMETRY: LiveTelemetry = {
   crashFlash: 0,
   noBrakeDriftSec: 0,
   opponents: [],
+  trafficPositions: [],
 };
 
 export default function App() {

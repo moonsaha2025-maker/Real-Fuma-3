@@ -51,6 +51,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   radioStation: 'horizon_fm',
   muted: false,
   cameraShake: true,
+  motionBlur: true,
+  trafficDensity: 'normal',
   autoFullscreen: true,
   units: 'KMH',
 };
