@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Gamepad2, Monitor, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, Gamepad2, Maximize2, Minimize2, Monitor, Volume2, VolumeX } from 'lucide-react';
 import {
   ControlScheme,
   GameSettings,
@@ -10,12 +10,18 @@ import { audioEngine } from '../engine/audio';
 
 interface SettingsModalProps {
   settings: GameSettings;
+  isFullscreen?: boolean;
+  fullscreenSupported?: boolean;
+  onToggleFullscreen?: () => void;
   onUpdate: (patch: Partial<GameSettings>) => void;
   onBack: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
+  isFullscreen = false,
+  fullscreenSupported = false,
+  onToggleFullscreen,
   onUpdate,
   onBack,
 }) => {
@@ -113,6 +119,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {settings.cameraShake ? 'ON' : 'OFF'}
               </button>
             </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-display text-slate-300">
+                AUTO FULLSCREEN IN BROWSER
+              </span>
+              <button
+                onClick={() => update({ autoFullscreen: !settings.autoFullscreen })}
+                className={`px-3 py-1 text-xs font-display border cursor-pointer ${
+                  settings.autoFullscreen
+                    ? 'bg-rose-600 border-rose-500 text-white font-bold'
+                    : 'bg-slate-900 border-slate-800 text-slate-400'
+                }`}
+              >
+                {settings.autoFullscreen ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            {fullscreenSupported && onToggleFullscreen && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-display text-slate-300">
+                  DISPLAY MODE
+                </span>
+                <button
+                  onClick={() => {
+                    audioEngine.playUiClick();
+                    onToggleFullscreen();
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-display border cursor-pointer ${
+                    isFullscreen
+                      ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                      : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200'
+                  }`}
+                >
+                  {isFullscreen ? (
+                    <>
+                      <Minimize2 className="w-3.5 h-3.5" />
+                      FULLSCREEN ON
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      ENTER FULLSCREEN
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Controls & Driving Assists */}

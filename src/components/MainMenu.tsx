@@ -5,6 +5,8 @@ import {
   Gift,
   Home,
   MapPin,
+  Maximize2,
+  Minimize2,
   ScrollText,
   Settings,
   Trophy,
@@ -23,6 +25,9 @@ interface MainMenuProps {
   save: PlayerSaveData;
   activeCar: OwnedCarData;
   sessionPlaySec: number;
+  isFullscreen?: boolean;
+  fullscreenSupported?: boolean;
+  onToggleFullscreen?: () => void;
   onClaimQuest: (questId: QuestId) => void;
   onClaimDaily: () => void;
   onNavigate: (screen: ScreenState) => void;
@@ -40,6 +45,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   save,
   activeCar,
   sessionPlaySec,
+  isFullscreen = false,
+  fullscreenSupported = false,
+  onToggleFullscreen,
   onClaimQuest,
   onClaimDaily,
   onNavigate,
@@ -181,6 +189,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 ${save.money.toLocaleString()}
               </span>
             </button>
+
+            {fullscreenSupported && onToggleFullscreen && (
+              <button
+                onClick={() => handleClick(onToggleFullscreen)}
+                className="bg-[#0e1018]/92 hover:bg-[#171a26] border border-white/12 rounded-full w-10 h-10 shadow-xl transition-colors cursor-pointer flex items-center justify-center text-slate-200 hover:text-white"
+                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="w-4 h-4 text-rose-400" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
+              </button>
+            )}
           </div>
         </div>
 

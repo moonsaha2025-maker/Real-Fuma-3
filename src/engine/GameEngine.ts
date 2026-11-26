@@ -688,6 +688,9 @@ export class GameEngine {
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('blur', this.handleBlur);
+    document.addEventListener('fullscreenchange', this.handleFullscreenResize);
+    document.addEventListener('webkitfullscreenchange', this.handleFullscreenResize);
+    window.visualViewport?.addEventListener('resize', this.handleResize);
 
     this.startLoop();
   }
@@ -1549,6 +1552,13 @@ export class GameEngine {
     if (this.rainLensPass) {
       this.rainLensPass.uniforms.uAspect.value = w / h;
     }
+  };
+
+  private handleFullscreenResize = (): void => {
+    this.handleResize();
+    window.setTimeout(() => {
+      if (!this.disposed) this.handleResize();
+    }, 65);
   };
 
   private handleKeyDown = (e: KeyboardEvent): void => {
@@ -2779,6 +2789,9 @@ export class GameEngine {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('blur', this.handleBlur);
+    document.removeEventListener('fullscreenchange', this.handleFullscreenResize);
+    document.removeEventListener('webkitfullscreenchange', this.handleFullscreenResize);
+    window.visualViewport?.removeEventListener('resize', this.handleResize);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestored);
 

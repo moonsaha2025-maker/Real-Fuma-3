@@ -24,6 +24,13 @@ import { REGIONS } from './data/world';
 import { audioEngine } from './engine/audio';
 import { DRIVE_SPAWN_S, GameEngine } from './engine/GameEngine';
 import { useGameStore } from './state/useGameStore';
+import {
+  exitAppFullscreen,
+  isFullscreenSupported,
+  isInFullscreen,
+  requestAppFullscreen,
+  subscribeFullscreenChange,
+} from './utils/fullscreen';
 
 const INITIAL_PT = getRoadPointAt(DRIVE_SPAWN_S, 0);
 
@@ -109,9 +116,14 @@ export default function App() {
     time?: TimeOfDay;
   } | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() => isInFullscreen());
+  const fullscreenSupported = isFullscreenSupported();
 
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
+  const manualExitFullscreenRef = useRef(false);
+  const appInitiatedExitRef = useRef(false);
+  const wasFullscreenRef = useRef<boolean>(isInFullscreen());
   const dragPointer = useRef<{ down: boolean; x: number; y: number }>({
     down: false,
     x: 0,
@@ -217,6 +229,87 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    return subscribeFullscreenChange((active) => {
+      if (wasFullscreenRef.current && !active && !appInitiatedExitRef.current) {
+        // User exited fullscreen manually (e.g. via Esc or OS gesture); don't force back until requested
+        manualExitFullscreenRef.current = true;
+      }
+      if (active) {
+        manualExitFullscreenRef.current = false;
+      }
+      appInitiatedExitRef.current = false;
+      wasFullscreenRef.current = active;
+      setIsFullscreen(active);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!save.settings.autoFullscreen || !fullscreenSupported) {
+      return;
+    }
+
+    if (!manualExitFullscreenRef.current && !isInFullscreen()) {
+      // Attempt immediate fullscreen on launch (works in permissive browsers/standalone frames)
+      void requestAppFullscreen();
+    }
+
+    const tryAutoFullscreenOnGesture = (e: Event) => {
+      if (
+        !save.settings.autoFullscreen ||
+        manualExitFullscreenRef.current ||
+        isInFullscreen()
+      ) {
+        return;
+      }
+      if (screen === 'onboarding') return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT')
+      ) {
+        return;
+      }
+      void requestAppFullscreen();
+    };
+
+    window.addEventListener('pointerdown', tryAutoFullscreenOnGesture, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('keydown', tryAutoFullscreenOnGesture, {
+      capture: true,
+    });
+    return () => {
+      window.removeEventListener('pointerdown', tryAutoFullscreenOnGesture, {
+        capture: true,
+      });
+      window.removeEventListener('keydown', tryAutoFullscreenOnGesture, {
+        capture: true,
+      });
+    };
+  }, [save.settings.autoFullscreen, fullscreenSupported, screen]);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!isFullscreenSupported()) {
+      notify('Fullscreen is not supported on this browser');
+      return;
+    }
+    if (isInFullscreen()) {
+      appInitiatedExitRef.current = true;
+      manualExitFullscreenRef.current = true;
+      await exitAppFullscreen();
+    } else {
+      manualExitFullscreenRef.current = false;
+      const ok = await requestAppFullscreen();
+      if (!ok) {
+        notify('Fullscreen blocked by browser/frame');
+      }
+    }
+  }, [notify]);
+
   const handleTouchInput = useCallback((patch: Partial<ControlInputState>) => {
     engineRef.current?.setTouchInput(patch);
   }, []);
@@ -273,6 +366,13 @@ export default function App() {
 
   const startFreeRoam = useCallback(
     (spawnX?: number, spawnZ?: number, weather?: WeatherType, time?: TimeOfDay) => {
+      if (
+        save.settings.autoFullscreen &&
+        !manualExitFullscreenRef.current &&
+        !isInFullscreen()
+      ) {
+        void requestAppFullscreen();
+      }
       setPaused(false);
       setPhotoMode(false);
       setRaceResult(null);
@@ -285,11 +385,18 @@ export default function App() {
       engineRef.current?.startFreeRoam(spawnX, spawnZ);
       setScreen('playing');
     },
-    [activeCarData],
+    [activeCarData, save.settings.autoFullscreen],
   );
 
   const startRaceEvent = useCallback(
     (event: RaceEvent, weather?: WeatherType, time?: TimeOfDay) => {
+      if (
+        save.settings.autoFullscreen &&
+        !manualExitFullscreenRef.current &&
+        !isInFullscreen()
+      ) {
+        void requestAppFullscreen();
+      }
       setPaused(false);
       setPhotoMode(false);
       setRaceResult(null);
@@ -300,7 +407,7 @@ export default function App() {
       engineRef.current?.startRaceEvent(event, weather, time);
       setScreen('playing');
     },
-    [activeCarData],
+    [activeCarData, save.settings.autoFullscreen],
   );
 
   useEffect(() => {
@@ -437,6 +544,13 @@ export default function App() {
         <OnboardingModal
           initialName={save.driverName}
           onComplete={(username, age) => {
+            if (
+              save.settings.autoFullscreen &&
+              !manualExitFullscreenRef.current &&
+              !isInFullscreen()
+            ) {
+              void requestAppFullscreen();
+            }
             completeOnboarding(username, age);
             engineRef.current?.setShowcaseMode(true);
             setScreen('main_menu');
@@ -449,6 +563,9 @@ export default function App() {
           save={save}
           activeCar={activeCarData}
           sessionPlaySec={sessionPlaySec}
+          isFullscreen={isFullscreen}
+          fullscreenSupported={fullscreenSupported}
+          onToggleFullscreen={toggleFullscreen}
           onClaimQuest={(qId) => {
             const shards = claimQuestReward(qId, sessionPlaySec);
             if (shards > 0) {
@@ -522,7 +639,18 @@ export default function App() {
       {screen === 'settings' && (
         <SettingsModal
           settings={save.settings}
-          onUpdate={updateSettings}
+          isFullscreen={isFullscreen}
+          fullscreenSupported={fullscreenSupported}
+          onToggleFullscreen={toggleFullscreen}
+          onUpdate={(patch) => {
+            if (patch.autoFullscreen === true) {
+              manualExitFullscreenRef.current = false;
+              if (!isInFullscreen()) {
+                void requestAppFullscreen();
+              }
+            }
+            updateSettings(patch);
+          }}
           onBack={() =>
             setScreen(activeRaceConfig || paused ? 'playing' : 'main_menu')
           }
@@ -628,6 +756,9 @@ export default function App() {
               headlightsOn: !prev.headlightsOn,
             }));
           }}
+          isFullscreen={isFullscreen}
+          fullscreenSupported={fullscreenSupported}
+          onToggleFullscreen={toggleFullscreen}
           onResetCar={() => engineRef.current?.resetCarToRoad()}
           onExitToMenu={enterMainMenu}
         />

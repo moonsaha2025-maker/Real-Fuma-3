@@ -51,6 +51,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   radioStation: 'horizon_fm',
   muted: false,
   cameraShake: true,
+  autoFullscreen: true,
   units: 'KMH',
 };
 

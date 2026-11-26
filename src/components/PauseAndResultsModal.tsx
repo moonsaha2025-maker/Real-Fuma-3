@@ -6,6 +6,8 @@ import {
   CloudRain,
   Lightbulb,
   MapPin,
+  Maximize2,
+  Minimize2,
   Play,
   Radio,
   RotateCcw,
@@ -55,6 +57,9 @@ interface PauseModalProps {
   onCycleWeather: (w: WeatherType, t: TimeOfDay) => void;
   onToggleDayNightCycle: () => void;
   onToggleHeadlights: () => void;
+  isFullscreen?: boolean;
+  fullscreenSupported?: boolean;
+  onToggleFullscreen?: () => void;
   onResetCar: () => void;
   onExitToMenu: () => void;
 }
@@ -78,6 +83,9 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onCycleWeather,
   onToggleDayNightCycle,
   onToggleHeadlights,
+  isFullscreen = false,
+  fullscreenSupported = false,
+  onToggleFullscreen,
   onResetCar,
   onExitToMenu,
 }) => {
@@ -172,6 +180,27 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
             RESET TO ROAD
           </button>
+          {fullscreenSupported && onToggleFullscreen && (
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onToggleFullscreen();
+              }}
+              className="col-span-2 flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-display text-[10px] uppercase py-2 cursor-pointer"
+            >
+              {isFullscreen ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-emerald-400" />
+                  FULLSCREEN: ON (TAP TO EXIT)
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
+                  ENTER FULLSCREEN
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Radio Station & Volume Tuner */}

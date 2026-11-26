@@ -175,6 +175,7 @@ export interface GameSettings {
   radioStation: RadioStationId;
   muted: boolean;
   cameraShake: boolean;
+  autoFullscreen: boolean;
   units: 'KMH' | 'MPH';
 }
 
