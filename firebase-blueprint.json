@@ -1,0 +1,207 @@
+{
+  "entities": {
+    "UserPrivateAccount": {
+      "title": "UserPrivateAccount",
+      "description": "Private Google account metadata isolated from public gameplay records.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the account owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified Google account email address.",
+          "maxLength": 320
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Google account display name.",
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Google profile avatar URL.",
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the account record was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last account sync."
+        }
+      },
+      "required": ["uid", "email", "displayName", "photoURL", "createdAt", "updatedAt"]
+    },
+    "PlayerCareerSave": {
+      "title": "PlayerCareerSave",
+      "description": "Cloud career progression, garage inventory, quests, daily login streak, and settings for Real Fuma 3.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the save owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "driverName": {
+          "type": "string",
+          "description": "In-game driver username.",
+          "minLength": 1,
+          "maxLength": 18
+        },
+        "driverAge": {
+          "type": "number",
+          "description": "Optional driver age (6 to 120)."
+        },
+        "onboarded": {
+          "type": "boolean",
+          "description": "Whether initial profile setup is complete."
+        },
+        "money": {
+          "type": "number",
+          "description": "In-game cash balance."
+        },
+        "fumaShards": {
+          "type": "number",
+          "description": "Current Fuma Shards balance."
+        },
+        "totalFumaShardsCollected": {
+          "type": "number",
+          "description": "Cumulative Fuma Shards earned."
+        },
+        "totalCashEarned": {
+          "type": "number",
+          "description": "Cumulative cash earned."
+        },
+        "bestNoBrakeDriftSec": {
+          "type": "number",
+          "description": "Longest continuous drift without braking in seconds."
+        },
+        "bestContinuousPlaySec": {
+          "type": "number",
+          "description": "Longest continuous session in seconds."
+        },
+        "claimedQuests": {
+          "type": "array",
+          "description": "List of claimed quest IDs (max 20)."
+        },
+        "dailyLogin": {
+          "type": "object",
+          "description": "Daily login streak state."
+        },
+        "xp": {
+          "type": "number",
+          "description": "Driver career XP."
+        },
+        "reputation": {
+          "type": "number",
+          "description": "Driver reputation score."
+        },
+        "rank": {
+          "type": "string",
+          "enum": ["rookie", "street", "pro", "elite", "legend"],
+          "description": "Current career rank tier."
+        },
+        "activeCarId": {
+          "type": "string",
+          "description": "Currently selected car ID.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ownedCars": {
+          "type": "object",
+          "description": "Map of owned cars, upgrades, and customizations."
+        },
+        "completedEvents": {
+          "type": "array",
+          "description": "IDs of completed race events (max 100)."
+        },
+        "unlockedRegions": {
+          "type": "array",
+          "description": "Unlocked map region IDs (max 10)."
+        },
+        "achievements": {
+          "type": "array",
+          "description": "Unlocked achievement IDs (max 64)."
+        },
+        "stats": {
+          "type": "object",
+          "description": "Career aggregate racing statistics."
+        },
+        "recentResults": {
+          "type": "array",
+          "description": "Recent race summaries (max 20)."
+        },
+        "leaderboard": {
+          "type": "array",
+          "description": "Local & personal best leaderboard entries (max 30)."
+        },
+        "settings": {
+          "type": "object",
+          "description": "Graphics, audio, and control preferences."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when cloud save was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when cloud save was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "driverName",
+        "onboarded",
+        "money",
+        "fumaShards",
+        "totalFumaShardsCollected",
+        "totalCashEarned",
+        "bestNoBrakeDriftSec",
+        "bestContinuousPlaySec",
+        "claimedQuests",
+        "dailyLogin",
+        "xp",
+        "reputation",
+        "rank",
+        "activeCarId",
+        "ownedCars",
+        "completedEvents",
+        "unlockedRegions",
+        "achievements",
+        "stats",
+        "recentResults",
+        "leaderboard",
+        "settings",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/{docId}": {
+      "schema": {
+        "$ref": "#/entities/UserPrivateAccount"
+      },
+      "description": "Private Google user account PII document ('account'), strictly readable and writable only by the verified owner."
+    },
+    "/users/{userId}/saves/{saveId}": {
+      "schema": {
+        "$ref": "#/entities/PlayerCareerSave"
+      },
+      "description": "Player cloud save document ('career'), strictly readable and writable only by the verified owner."
+    }
+  }
+}

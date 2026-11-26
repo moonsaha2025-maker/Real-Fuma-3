@@ -21,9 +21,19 @@ import { WorldMapModal } from './components/WorldMapModal';
 import { getCarSpec } from './data/cars';
 import { getRoadPointAt } from './data/track';
 import { REGIONS } from './data/world';
+import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { audioEngine } from './engine/audio';
 import { DRIVE_SPAWN_S, GameEngine } from './engine/GameEngine';
-import { useGameStore } from './state/useGameStore';
+import {
+  auth,
+  deleteCloudCareerSave,
+  loadCloudCareerSave,
+  saveCloudCareerSave,
+  signInWithGoogle,
+  signOutGoogle,
+  syncPrivateAccountDoc,
+} from './services/firebase';
+import { normalizeSaveData, useGameStore } from './state/useGameStore';
 import {
   exitAppFullscreen,
   isFullscreenSupported,
@@ -98,10 +108,26 @@ export default function App() {
     updateContinuousPlaySec,
     claimQuestReward,
     claimDailyLoginPrize,
+    replaceSave,
     resetProgress,
   } = useGameStore();
 
+  const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [cloudSyncState, setCloudSyncState] = useState<
+    'idle' | 'syncing' | 'synced' | 'error'
+  >('idle');
+  const cloudHydratedUidRef = useRef<string | null>(null);
+  const inFlightHydrateRef = useRef<{
+    uid: string;
+    promise: Promise<{ restoredExisting: boolean }>;
+  } | null>(null);
+  const latestSaveRef = useRef(save);
+  latestSaveRef.current = save;
+  const screenRef = useRef<ScreenState>('loading');
+
   const [screen, setScreen] = useState<ScreenState>('loading');
+  screenRef.current = screen;
   const [paused, setPaused] = useState(false);
   const [photoMode, setPhotoMode] = useState(false);
   const [showWorldMap, setShowWorldMap] = useState(false);
@@ -149,6 +175,164 @@ export default function App() {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(null), 2400);
   }, []);
+
+  const hydrateAccountFromCloud = useCallback(
+    async (user: FirebaseUser, showWelcomeToast: boolean) => {
+      if (inFlightHydrateRef.current?.uid === user.uid) {
+        return inFlightHydrateRef.current.promise;
+      }
+
+      const promise = (async () => {
+        setCloudSyncState('syncing');
+        try {
+          await syncPrivateAccountDoc(user);
+          const cloudPartial = await loadCloudCareerSave(user.uid);
+          if (cloudPartial && cloudPartial.onboarded) {
+            const restored = normalizeSaveData(cloudPartial);
+            replaceSave(restored);
+            const restoredCar =
+              restored.ownedCars[restored.activeCarId] ??
+              Object.values(restored.ownedCars)[0];
+            if (restoredCar) {
+              engineRef.current?.setPlayerCar(restoredCar);
+            }
+            engineRef.current?.applySettings(restored.settings);
+            audioEngine.applySettings(restored.settings);
+            cloudHydratedUidRef.current = user.uid;
+            setCloudSyncState('synced');
+            if (screenRef.current === 'onboarding') {
+              engineRef.current?.setShowcaseMode(true);
+              setScreen('main_menu');
+            }
+            if (showWelcomeToast) {
+              notify(`Welcome back, ${restored.driverName}!`);
+            }
+            return { restoredExisting: true };
+          }
+
+          // New Google account (or not onboarded yet): if player already onboarded locally, save it to cloud
+          const curSave = latestSaveRef.current;
+          if (curSave.onboarded) {
+            await saveCloudCareerSave(user.uid, curSave);
+            setCloudSyncState('synced');
+            if (showWelcomeToast) {
+              notify('Google Account Created & Synced!');
+            }
+          } else {
+            setCloudSyncState('idle');
+          }
+          cloudHydratedUidRef.current = user.uid;
+          return { restoredExisting: false };
+        } catch (err) {
+          console.error('Cloud hydrate error:', err);
+          cloudHydratedUidRef.current = user.uid;
+          setCloudSyncState('error');
+          return { restoredExisting: false };
+        } finally {
+          if (inFlightHydrateRef.current?.uid === user.uid) {
+            inFlightHydrateRef.current = null;
+          }
+        }
+      })();
+
+      inFlightHydrateRef.current = { uid: user.uid, promise };
+      return promise;
+    },
+    [replaceSave, notify],
+  );
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      if (!user) {
+        cloudHydratedUidRef.current = null;
+        setCloudSyncState('idle');
+        return;
+      }
+      if (cloudHydratedUidRef.current !== user.uid) {
+        void hydrateAccountFromCloud(user, false);
+      }
+    });
+    return () => unsub();
+  }, [hydrateAccountFromCloud]);
+
+  useEffect(() => {
+    if (!authUser || !save.onboarded) return;
+    if (cloudHydratedUidRef.current !== authUser.uid) return;
+
+    const timer = window.setTimeout(() => {
+      setCloudSyncState('syncing');
+      saveCloudCareerSave(authUser.uid, latestSaveRef.current)
+        .then(() => setCloudSyncState('synced'))
+        .catch(() => setCloudSyncState('error'));
+    }, 1400);
+
+    return () => window.clearTimeout(timer);
+  }, [authUser, save]);
+
+  const handleGoogleSignIn = useCallback(async (): Promise<{
+    ok: boolean;
+    error?: string;
+    displayName?: string;
+  }> => {
+    setAuthBusy(true);
+    try {
+      const user = await signInWithGoogle();
+      setAuthUser(user);
+      await hydrateAccountFromCloud(user, true);
+      return {
+        ok: true,
+        displayName: user.displayName ?? undefined,
+      };
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request'
+      ) {
+        return { ok: false };
+      }
+      if (code === 'auth/popup-blocked') {
+        return {
+          ok: false,
+          error: 'Pop-up was blocked by your browser. Allow pop-ups and try again.',
+        };
+      }
+      const msg =
+        err instanceof Error ? err.message : 'Failed to sign in with Google.';
+      return { ok: false, error: msg };
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [hydrateAccountFromCloud]);
+
+  const handleGoogleSignOut = useCallback(async () => {
+    try {
+      await signOutGoogle();
+      cloudHydratedUidRef.current = null;
+      setAuthUser(null);
+      setCloudSyncState('idle');
+      notify('Signed out — playing locally');
+    } catch {
+      notify('Could not sign out cleanly');
+    }
+  }, [notify]);
+
+  const handleSyncNow = useCallback(async () => {
+    if (!authUser) return;
+    setCloudSyncState('syncing');
+    try {
+      await saveCloudCareerSave(authUser.uid, latestSaveRef.current);
+      setCloudSyncState('synced');
+      notify('Cloud Save Synced');
+    } catch {
+      setCloudSyncState('error');
+      notify('Cloud sync failed');
+    }
+  }, [authUser, notify]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -543,6 +727,9 @@ export default function App() {
       {screen === 'onboarding' && (
         <OnboardingModal
           initialName={save.driverName}
+          authUser={authUser}
+          authBusy={authBusy}
+          onGoogleSignIn={handleGoogleSignIn}
           onComplete={(username, age) => {
             if (
               save.settings.autoFullscreen &&
@@ -563,6 +750,12 @@ export default function App() {
           save={save}
           activeCar={activeCarData}
           sessionPlaySec={sessionPlaySec}
+          authUser={authUser}
+          authBusy={authBusy}
+          cloudSyncState={cloudSyncState}
+          onGoogleSignIn={() => {
+            void handleGoogleSignIn();
+          }}
           isFullscreen={isFullscreen}
           fullscreenSupported={fullscreenSupported}
           onToggleFullscreen={toggleFullscreen}
@@ -660,8 +853,17 @@ export default function App() {
       {screen === 'profile' && (
         <ProfileModal
           save={save}
+          authUser={authUser}
+          authBusy={authBusy}
+          cloudSyncState={cloudSyncState}
+          onGoogleSignIn={handleGoogleSignIn}
+          onGoogleSignOut={handleGoogleSignOut}
+          onSyncNow={handleSyncNow}
           onUpdateName={setDriverName}
           onResetSave={() => {
+            if (authUser) {
+              void deleteCloudCareerSave(authUser.uid).catch(() => {});
+            }
             resetProgress();
             notify('Career Save Reset');
             setScreen('onboarding');

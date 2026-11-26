@@ -1,11 +1,27 @@
 import React, { useState } from 'react';
-import { ArrowLeft, RotateCcw, User } from 'lucide-react';
+import {
+  ArrowLeft,
+  Cloud,
+  CloudOff,
+  Loader2,
+  LogOut,
+  RefreshCw,
+  RotateCcw,
+  User,
+} from 'lucide-react';
+import type { User as FirebaseUser } from 'firebase/auth';
 import { getCarSpec, RANK_INFO } from '../data/cars';
 import { audioEngine } from '../engine/audio';
 import { PlayerSaveData } from '../types/game';
 
 interface ProfileModalProps {
   save: PlayerSaveData;
+  authUser: FirebaseUser | null;
+  authBusy?: boolean;
+  cloudSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  onGoogleSignIn: () => Promise<{ ok: boolean; error?: string }>;
+  onGoogleSignOut: () => Promise<void>;
+  onSyncNow: () => Promise<void>;
   onUpdateName: (name: string) => void;
   onResetSave: () => void;
   onBack: () => void;
@@ -13,12 +29,20 @@ interface ProfileModalProps {
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
   save,
+  authUser,
+  authBusy = false,
+  cloudSyncState = 'idle',
+  onGoogleSignIn,
+  onGoogleSignOut,
+  onSyncNow,
   onUpdateName,
   onResetSave,
   onBack,
 }) => {
   const [nameInput, setNameInput] = useState(save.driverName);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const garageValue = Object.keys(save.ownedCars).reduce(
     (sum, id) => sum + getCarSpec(id).price,
@@ -93,6 +117,139 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   SAVE
                 </button>
               </div>
+            </div>
+
+            {/* Google Account & Cloud Save Section */}
+            <div className="pt-3 border-t border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between text-[10px] font-display text-slate-400 uppercase">
+                <span>GOOGLE CLOUD ACCOUNT</span>
+                {authUser ? (
+                  <span
+                    className={`flex items-center gap-1 ${
+                      cloudSyncState === 'error'
+                        ? 'text-rose-400'
+                        : cloudSyncState === 'syncing'
+                          ? 'text-amber-300'
+                          : 'text-emerald-400'
+                    }`}
+                  >
+                    <Cloud className="w-3 h-3" />
+                    {cloudSyncState === 'syncing'
+                      ? 'SYNCING'
+                      : cloudSyncState === 'error'
+                        ? 'SYNC ERROR'
+                        : 'SYNCED'}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-slate-500">
+                    <CloudOff className="w-3 h-3" />
+                    LOCAL ONLY
+                  </span>
+                )}
+              </div>
+
+              {!authUser ? (
+                <div className="space-y-2">
+                  <button
+                    disabled={authBusy}
+                    onClick={async () => {
+                      audioEngine.playUiClick();
+                      setAuthError(null);
+                      const res = await onGoogleSignIn();
+                      if (!res.ok && res.error) setAuthError(res.error);
+                    }}
+                    className="w-full min-h-[40px] bg-white hover:bg-slate-100 disabled:opacity-70 text-[#0f172a] font-display font-bold text-xs px-3 py-2 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    {authBusy ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" aria-hidden="true">
+                        <path
+                          fill="#4285F4"
+                          d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                        />
+                      </svg>
+                    )}
+                    <span>
+                      {authBusy ? 'CONNECTING...' : 'SIGN IN / CREATE ACCOUNT'}
+                    </span>
+                  </button>
+                  <p className="text-[11px] text-slate-400">
+                    Link your Google account to save cars, cash, and Fuma Shards across devices.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 bg-slate-950/80 border border-slate-800 p-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {authUser.photoURL && !avatarFailed ? (
+                      <img
+                        src={authUser.photoURL}
+                        alt={authUser.displayName ?? 'Google Avatar'}
+                        referrerPolicy="no-referrer"
+                        onError={() => setAvatarFailed(true)}
+                        className="w-9 h-9 rounded-full border border-emerald-400/50 object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4 text-emerald-300" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-xs font-display font-bold text-white truncate">
+                        {authUser.displayName || 'Google Driver'}
+                      </div>
+                      <div className="text-[11px] text-slate-400 truncate">
+                        {authUser.email}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => {
+                        audioEngine.playUiClick();
+                        void onSyncNow();
+                      }}
+                      disabled={cloudSyncState === 'syncing'}
+                      className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1.5 text-[11px] font-display text-slate-200 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`w-3 h-3 text-sky-400 ${
+                          cloudSyncState === 'syncing' ? 'animate-spin' : ''
+                        }`}
+                      />
+                      SYNC NOW
+                    </button>
+                    <button
+                      onClick={() => {
+                        audioEngine.playUiClick();
+                        void onGoogleSignOut();
+                      }}
+                      className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-rose-950/50 border border-slate-700 hover:border-rose-600/50 px-2.5 py-1.5 text-[11px] font-display text-slate-200 hover:text-rose-200 cursor-pointer"
+                    >
+                      <LogOut className="w-3 h-3 text-rose-400" />
+                      SIGN OUT
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {authError && (
+                <div className="text-[11px] text-rose-300 bg-rose-950/50 border border-rose-500/40 px-2.5 py-1.5">
+                  {authError}
+                </div>
+              )}
             </div>
 
             <div className="pt-3 border-t border-slate-800">

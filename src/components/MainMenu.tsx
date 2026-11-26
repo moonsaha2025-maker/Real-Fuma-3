@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import {
   Car,
+  Cloud,
   Gem,
   Gift,
   Home,
+  Loader2,
   MapPin,
   Maximize2,
   Minimize2,
@@ -13,6 +15,7 @@ import {
   User,
   Users,
 } from 'lucide-react';
+import type { User as FirebaseUser } from 'firebase/auth';
 import { getCarSpec, RANK_ORDER } from '../data/cars';
 import { computeQuestStatuses, getDailyLoginStatus } from '../data/quests';
 import { audioEngine } from '../engine/audio';
@@ -25,6 +28,10 @@ interface MainMenuProps {
   save: PlayerSaveData;
   activeCar: OwnedCarData;
   sessionPlaySec: number;
+  authUser?: FirebaseUser | null;
+  authBusy?: boolean;
+  cloudSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  onGoogleSignIn?: () => void;
   isFullscreen?: boolean;
   fullscreenSupported?: boolean;
   onToggleFullscreen?: () => void;
@@ -45,6 +52,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   save,
   activeCar,
   sessionPlaySec,
+  authUser = null,
+  authBusy = false,
+  cloudSyncState = 'idle',
+  onGoogleSignIn,
   isFullscreen = false,
   fullscreenSupported = false,
   onToggleFullscreen,
@@ -57,6 +68,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [showCredits, setShowCredits] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [showDaily, setShowDaily] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
 
   const spec = getCarSpec(activeCar.carId);
   const rankLevel = Math.max(1, RANK_ORDER.indexOf(save.rank) + 1);
@@ -113,25 +125,85 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       <div className="relative z-10 flex-1 flex flex-col justify-between px-4 sm:px-8 lg:px-12 pt-3 sm:pt-5 pb-3 sm:pb-5 min-h-0">
         {/* Top Row: Driver Profile + Level Badge (Left) & Currency Capsule (Right) */}
         <div className="flex items-center justify-between gap-4 pointer-events-auto">
-          <button
-            onClick={() => handleClick(() => onNavigate('profile'))}
-            className="group flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded px-1 py-0.5 min-h-[40px]"
-            title="Open Driver Profile"
-          >
-            <User className="w-5 h-5 text-white drop-shadow shrink-0" />
-            <span className="font-display italic font-bold text-base sm:text-lg text-white tracking-wide drop-shadow group-hover:text-amber-300 transition-colors whitespace-nowrap">
-              {save.driverName}
-            </span>
-            <span
-              className="inline-flex items-center justify-center px-2.5 py-0.5 text-xs font-display italic font-bold tracking-wider text-[#090b10] shadow-md whitespace-nowrap"
-              style={{
-                background: 'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)',
-                transform: 'skewX(-16deg)',
-              }}
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => handleClick(() => onNavigate('profile'))}
+              className="group flex items-center gap-2.5 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded px-1 py-0.5 min-h-[40px]"
+              title={
+                authUser
+                  ? `Signed in as ${authUser.email} — Open Profile`
+                  : 'Open Driver Profile'
+              }
             >
-              <span style={{ transform: 'skewX(16deg)' }}>LV {rankLevel}</span>
-            </span>
-          </button>
+              {authUser?.photoURL && !avatarFailed ? (
+                <img
+                  src={authUser.photoURL}
+                  alt={save.driverName}
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarFailed(true)}
+                  className="w-6 h-6 rounded-full border border-white/40 object-cover shrink-0 shadow"
+                />
+              ) : (
+                <User className="w-5 h-5 text-white drop-shadow shrink-0" />
+              )}
+              <span className="font-display italic font-bold text-base sm:text-lg text-white tracking-wide drop-shadow group-hover:text-amber-300 transition-colors whitespace-nowrap truncate max-w-[140px] sm:max-w-none">
+                {save.driverName}
+              </span>
+              <span
+                className="inline-flex items-center justify-center px-2.5 py-0.5 text-xs font-display italic font-bold tracking-wider text-[#090b10] shadow-md whitespace-nowrap"
+                style={{
+                  background: 'linear-gradient(135deg, #fbbf24 0%, #d97706 100%)',
+                  transform: 'skewX(-16deg)',
+                }}
+              >
+                <span style={{ transform: 'skewX(16deg)' }}>LV {rankLevel}</span>
+              </span>
+              {authUser && (
+                <Cloud
+                  className={`w-3.5 h-3.5 shrink-0 ${
+                    cloudSyncState === 'error'
+                      ? 'text-rose-400'
+                      : cloudSyncState === 'syncing'
+                        ? 'text-amber-300'
+                        : 'text-emerald-400'
+                  }`}
+                />
+              )}
+            </button>
+
+            {!authUser && onGoogleSignIn && (
+              <button
+                onClick={() => handleClick(onGoogleSignIn)}
+                disabled={authBusy}
+                className="bg-white/95 hover:bg-white disabled:opacity-70 text-[#0f172a] rounded-full px-3 py-1 min-h-[34px] text-[11px] font-display font-bold tracking-wide shadow-lg flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                title="Sign in or Create Account with Google"
+              >
+                {authBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 shrink-0" aria-hidden="true">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                    />
+                  </svg>
+                )}
+                <span className="hidden sm:inline">SIGN IN</span>
+              </button>
+            )}
+          </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/* Daily Login Prizes Trigger */}

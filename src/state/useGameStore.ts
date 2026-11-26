@@ -101,76 +101,83 @@ function createInitialSaveData(): PlayerSaveData {
   };
 }
 
+export function normalizeSaveData(
+  parsed: Partial<PlayerSaveData> | null | undefined,
+): PlayerSaveData {
+  const base = createInitialSaveData();
+  if (!parsed) return base;
+
+  const validRegionIds = new Set(REGIONS.map((r) => r.id));
+  const parsedRegions = Array.isArray(parsed.unlockedRegions)
+    ? parsed.unlockedRegions.filter((id): id is RegionId =>
+        validRegionIds.has(id as RegionId),
+      )
+    : [];
+
+  const validCarIds = new Set(CAR_CATALOG.map((c) => c.id));
+  const mergedOwned: Record<string, OwnedCarData> = {};
+  if (parsed.ownedCars) {
+    for (const [k, v] of Object.entries(parsed.ownedCars)) {
+      if (validCarIds.has(k) && v) {
+        mergedOwned[k] = v;
+      }
+    }
+  }
+  const ownedCars =
+    Object.keys(mergedOwned).length > 0 ? mergedOwned : base.ownedCars;
+
+  const activeCarId =
+    parsed.activeCarId && ownedCars[parsed.activeCarId]
+      ? parsed.activeCarId
+      : Object.keys(ownedCars)[0];
+
+  return {
+    ...base,
+    ...parsed,
+    activeCarId,
+    ownedCars,
+    fumaShards:
+      typeof parsed.fumaShards === 'number'
+        ? parsed.fumaShards
+        : base.fumaShards,
+    totalFumaShardsCollected:
+      typeof parsed.totalFumaShardsCollected === 'number'
+        ? parsed.totalFumaShardsCollected
+        : Math.max(base.totalFumaShardsCollected, parsed.fumaShards ?? 0),
+    totalCashEarned:
+      typeof parsed.totalCashEarned === 'number' ? parsed.totalCashEarned : 0,
+    bestNoBrakeDriftSec:
+      typeof parsed.bestNoBrakeDriftSec === 'number'
+        ? parsed.bestNoBrakeDriftSec
+        : 0,
+    bestContinuousPlaySec:
+      typeof parsed.bestContinuousPlaySec === 'number'
+        ? parsed.bestContinuousPlaySec
+        : 0,
+    claimedQuests: Array.isArray(parsed.claimedQuests)
+      ? parsed.claimedQuests
+      : [],
+    dailyLogin: {
+      ...base.dailyLogin,
+      ...(parsed.dailyLogin ?? {}),
+    },
+    unlockedRegions:
+      parsedRegions.length > 0 ? parsedRegions : base.unlockedRegions,
+    stats: { ...base.stats, ...(parsed.stats ?? {}) },
+    settings: { ...base.settings, ...(parsed.settings ?? {}) },
+    leaderboard:
+      parsed.leaderboard && parsed.leaderboard.length > 0
+        ? parsed.leaderboard
+        : base.leaderboard,
+  };
+}
+
 function loadSaveData(): PlayerSaveData {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return createInitialSaveData();
     const parsed = JSON.parse(raw) as Partial<PlayerSaveData>;
-    const base = createInitialSaveData();
-
-    const validRegionIds = new Set(REGIONS.map((r) => r.id));
-    const parsedRegions = Array.isArray(parsed.unlockedRegions)
-      ? parsed.unlockedRegions.filter((id): id is RegionId =>
-          validRegionIds.has(id as RegionId),
-        )
-      : [];
-
-    const validCarIds = new Set(CAR_CATALOG.map((c) => c.id));
-    const mergedOwned: Record<string, OwnedCarData> = {};
-    if (parsed.ownedCars) {
-      for (const [k, v] of Object.entries(parsed.ownedCars)) {
-        if (validCarIds.has(k) && v) {
-          mergedOwned[k] = v;
-        }
-      }
-    }
-    const ownedCars =
-      Object.keys(mergedOwned).length > 0 ? mergedOwned : base.ownedCars;
-
-    const activeCarId =
-      parsed.activeCarId && ownedCars[parsed.activeCarId]
-        ? parsed.activeCarId
-        : Object.keys(ownedCars)[0];
-
-    return {
-      ...base,
-      ...parsed,
-      activeCarId,
-      ownedCars,
-      fumaShards:
-        typeof parsed.fumaShards === 'number'
-          ? parsed.fumaShards
-          : base.fumaShards,
-      totalFumaShardsCollected:
-        typeof parsed.totalFumaShardsCollected === 'number'
-          ? parsed.totalFumaShardsCollected
-          : Math.max(base.totalFumaShardsCollected, parsed.fumaShards ?? 0),
-      totalCashEarned:
-        typeof parsed.totalCashEarned === 'number' ? parsed.totalCashEarned : 0,
-      bestNoBrakeDriftSec:
-        typeof parsed.bestNoBrakeDriftSec === 'number'
-          ? parsed.bestNoBrakeDriftSec
-          : 0,
-      bestContinuousPlaySec:
-        typeof parsed.bestContinuousPlaySec === 'number'
-          ? parsed.bestContinuousPlaySec
-          : 0,
-      claimedQuests: Array.isArray(parsed.claimedQuests)
-        ? parsed.claimedQuests
-        : [],
-      dailyLogin: {
-        ...base.dailyLogin,
-        ...(parsed.dailyLogin ?? {}),
-      },
-      unlockedRegions:
-        parsedRegions.length > 0 ? parsedRegions : base.unlockedRegions,
-      stats: { ...base.stats, ...(parsed.stats ?? {}) },
-      settings: { ...base.settings, ...(parsed.settings ?? {}) },
-      leaderboard:
-        parsed.leaderboard && parsed.leaderboard.length > 0
-          ? parsed.leaderboard
-          : base.leaderboard,
-    };
+    return normalizeSaveData(parsed);
   } catch {
     return createInitialSaveData();
   }
@@ -539,6 +546,16 @@ export function useGameStore() {
     return claimedTier;
   }, []);
 
+  const replaceSave = useCallback((nextSave: PlayerSaveData) => {
+    const normalized = normalizeSaveData(nextSave);
+    setSave(normalized);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, []);
+
   const resetProgress = useCallback(() => {
     const fresh = createInitialSaveData();
     setSave(fresh);
@@ -566,6 +583,7 @@ export function useGameStore() {
     updateContinuousPlaySec,
     claimQuestReward,
     claimDailyLoginPrize,
+    replaceSave,
     resetProgress,
   };
 }
