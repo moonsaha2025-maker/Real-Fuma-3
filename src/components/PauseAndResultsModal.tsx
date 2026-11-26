@@ -1,42 +1,135 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Aperture,
+  Car,
   ChevronLeft,
   ChevronRight,
+  Cloud,
+  CloudLightning,
   CloudRain,
+  Compass,
   Lightbulb,
   MapPin,
   Maximize2,
   Minimize2,
+  Moon,
+  Pause,
   Play,
+  Power,
   Radio,
   RotateCcw,
   ScrollText,
   Settings,
+  Sparkles,
   Sun,
+  Sunrise,
+  Sunset,
+  TrendingUp,
   Trophy,
   Volume2,
   VolumeX,
-  Warehouse,
+  Wind,
 } from 'lucide-react';
+import horizonBucketListImg from '../assets/images/horizon_bucket_list_supercar_1795695145762.jpg';
+import horizonPromoHeadlightImg from '../assets/images/horizon_promo_headlight_1795695143909.jpg';
+import horizonPhotoModeImg from '../assets/images/horizon_photo_mode_coast_1795695144463.jpg';
+import { CAR_CATALOG, getCarSpec, RANK_INFO } from '../data/cars';
+import { computeQuestStatuses } from '../data/quests';
+import { ACHIEVEMENTS_LIST, RACE_EVENTS, REGIONS } from '../data/world';
 import { audioEngine } from '../engine/audio';
 import { getRadioStationMeta, RADIO_STATIONS, radioEngine } from '../engine/radio';
 import {
+  OwnedCarData,
+  PlayerSaveData,
   RaceResultSummary,
   RadioStationId,
   TimeOfDay,
   WeatherType,
 } from '../types/game';
 
-const WEATHER_CYCLE: WeatherType[] = [
-  'sunny',
-  'cloudy',
-  'rain',
-  'heavy_rain',
-  'thunderstorm',
-  'fog',
+const WEATHER_OPTIONS: { id: WeatherType; label: string }[] = [
+  { id: 'sunny', label: 'Sunny Clear' },
+  { id: 'cloudy', label: 'Overcast' },
+  { id: 'rain', label: 'Light Rain' },
+  { id: 'heavy_rain', label: 'Downpour' },
+  { id: 'thunderstorm', label: 'Thunderstorm' },
+  { id: 'fog', label: 'Coastal Fog' },
 ];
-const TIME_CYCLE: TimeOfDay[] = ['day', 'sunset', 'night', 'sunrise'];
+
+const TIME_OPTIONS: { id: TimeOfDay; label: string }[] = [
+  { id: 'day', label: 'Midday' },
+  { id: 'sunset', label: 'Golden Dusk' },
+  { id: 'night', label: 'Midnight' },
+  { id: 'sunrise', label: 'Dawn' },
+];
+
+type PauseTabId = 'home' | 'atmosphere' | 'garage_radio' | 'progress' | 'system';
+
+const PAUSE_TABS: { id: PauseTabId; label: string }[] = [
+  { id: 'home', label: 'HOME' },
+  { id: 'atmosphere', label: 'WEATHER' },
+  { id: 'garage_radio', label: 'CAR & RADIO' },
+  { id: 'progress', label: 'PROGRESS' },
+  { id: 'system', label: 'SYSTEM' },
+];
+
+function computePerformanceClass(
+  specHp: number,
+  topSpeedKmh: number,
+  upgrades: OwnedCarData['upgrades'] | undefined,
+): { letter: string; colorClass: string; pi: number } {
+  const upgradeSum = upgrades
+    ? upgrades.engine +
+      upgrades.turbo +
+      upgrades.tires +
+      upgrades.brakes +
+      upgrades.suspension +
+      upgrades.nitro
+    : 0;
+  const rawPi = Math.min(
+    999,
+    Math.round(460 + specHp * 0.22 + topSpeedKmh * 0.52 + upgradeSum * 11),
+  );
+  if (rawPi >= 960) return { letter: 'X', colorClass: 'bg-emerald-500 text-white', pi: rawPi };
+  if (rawPi >= 880) return { letter: 'S2', colorClass: 'bg-blue-600 text-white', pi: rawPi };
+  if (rawPi >= 800) return { letter: 'S1', colorClass: 'bg-violet-600 text-white', pi: rawPi };
+  if (rawPi >= 700) return { letter: 'A', colorClass: 'bg-rose-600 text-white', pi: rawPi };
+  return { letter: 'B', colorClass: 'bg-amber-500 text-slate-950', pi: rawPi };
+}
+
+interface PhotoTileBackdropProps {
+  src: string;
+  alt: string;
+  fallbackGradient: string;
+}
+
+const PhotoTileBackdrop: React.FC<PhotoTileBackdropProps> = ({
+  src,
+  alt,
+  fallbackGradient,
+}) => {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <>
+      {!failed ? (
+        <img
+          src={src}
+          alt={alt}
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+          className="absolute inset-0 w-full h-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
+        />
+      ) : (
+        <div className={`absolute inset-0 ${fallbackGradient}`} />
+      )}
+      <div
+        className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/25 to-black/80"
+        aria-hidden="true"
+      />
+    </>
+  );
+};
 
 interface PauseModalProps {
   weather: WeatherType;
@@ -46,6 +139,10 @@ interface PauseModalProps {
   headlightsOn: boolean;
   radioStation: RadioStationId;
   radioVolume: number;
+  regionName?: string;
+  save?: PlayerSaveData;
+  activeCarData?: OwnedCarData;
+  sessionPlaySec?: number;
   onChangeRadioStation: (station: RadioStationId) => void;
   onChangeRadioVolume: (volume: number) => void;
   onResume: () => void;
@@ -72,6 +169,10 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   headlightsOn,
   radioStation,
   radioVolume,
+  regionName = 'SUNSET COAST',
+  save,
+  activeCarData,
+  sessionPlaySec = 0,
   onChangeRadioStation,
   onChangeRadioVolume,
   onResume,
@@ -89,8 +190,36 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onResetCar,
   onExitToMenu,
 }) => {
+  const [activeTab, setActiveTab] = useState<PauseTabId>('home');
+
+  const activeSpec = useMemo(
+    () => getCarSpec(activeCarData?.carId ?? save?.activeCarId ?? CAR_CATALOG[0].id),
+    [activeCarData?.carId, save?.activeCarId],
+  );
+  const perfClass = useMemo(
+    () =>
+      computePerformanceClass(
+        activeSpec.horsepower,
+        activeSpec.topSpeedKmh,
+        activeCarData?.upgrades,
+      ),
+    [activeSpec.horsepower, activeSpec.topSpeedKmh, activeCarData?.upgrades],
+  );
+
   const stationMeta = getRadioStationMeta(radioStation);
   const currentTrack = radioEngine.getCurrentTrack();
+
+  const claimableQuestsCount = useMemo(() => {
+    if (!save) return 0;
+    return computeQuestStatuses(save, sessionPlaySec).filter(
+      (q) => q.completed && !q.claimed,
+    ).length;
+  }, [save, sessionPlaySec]);
+
+  const driverLevel = useMemo(() => {
+    if (!save) return 1;
+    return Math.max(1, Math.min(999, Math.floor(save.xp / 250) + 1));
+  }, [save]);
 
   const cycleStation = (delta: -1 | 1) => {
     audioEngine.init();
@@ -100,286 +229,555 @@ export const PauseModal: React.FC<PauseModalProps> = ({
     onChangeRadioStation(RADIO_STATIONS[nextIdx].id);
   };
 
-  const nextWeather = () => {
-    const idx = WEATHER_CYCLE.indexOf(weather);
-    onCycleWeather(WEATHER_CYCLE[(idx + 1) % WEATHER_CYCLE.length], timeOfDay);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (e.code === 'ArrowRight' || e.code === 'KeyE') {
+        audioEngine.playUiClick();
+        setActiveTab((prev) => {
+          const idx = PAUSE_TABS.findIndex((t) => t.id === prev);
+          return PAUSE_TABS[(idx + 1) % PAUSE_TABS.length].id;
+        });
+      } else if (e.code === 'ArrowLeft' || e.code === 'KeyQ') {
+        audioEngine.playUiClick();
+        setActiveTab((prev) => {
+          const idx = PAUSE_TABS.findIndex((t) => t.id === prev);
+          return PAUSE_TABS[(idx - 1 + PAUSE_TABS.length) % PAUSE_TABS.length].id;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const topRival = useMemo(() => {
+    if (!save?.leaderboard || save.leaderboard.length === 0) {
+      return { name: 'K. Takahashi', score: 98500 };
+    }
+    const sorted = [...save.leaderboard].sort((a, b) => b.score - a.score);
+    return { name: sorted[0].driverName, score: sorted[0].score };
+  }, [save?.leaderboard]);
+
+  const unlockedCount = save?.unlockedRegions.length ?? 1;
+  const completedEventsCount = save?.completedEvents.length ?? 0;
+  const racesWonCount = save?.stats.racesWon ?? 0;
+  const ownedCarsCount = save ? Object.keys(save.ownedCars).length : 1;
+  const achievementsCount = save?.achievements.length ?? 0;
+  const playerRankLabel = save ? RANK_INFO[save.rank].label : 'Rookie';
+
+  const weatherBadgeIcon = (w: WeatherType, cls = 'w-5 h-5') => {
+    switch (w) {
+      case 'sunny':
+        return <Sun className={cls} />;
+      case 'cloudy':
+        return <Cloud className={cls} />;
+      case 'rain':
+      case 'heavy_rain':
+        return <CloudRain className={cls} />;
+      case 'thunderstorm':
+        return <CloudLightning className={cls} />;
+      case 'fog':
+        return <Wind className={cls} />;
+    }
   };
 
-  const nextTime = () => {
-    const idx = TIME_CYCLE.indexOf(timeOfDay);
-    onCycleWeather(weather, TIME_CYCLE[(idx + 1) % TIME_CYCLE.length]);
+  const timeBadgeIcon = (t: TimeOfDay, cls = 'w-5 h-5') => {
+    switch (t) {
+      case 'day':
+        return <Sun className={cls} />;
+      case 'sunset':
+        return <Sunset className={cls} />;
+      case 'night':
+        return <Moon className={cls} />;
+      case 'sunrise':
+        return <Sunrise className={cls} />;
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#06080d]/82 backdrop-blur-md overflow-y-auto flex justify-center p-2.5 sm:p-5">
-      <div
-        className="my-auto w-full max-w-3xl bg-[#0c0f16]/96 border border-white/12 shadow-[0_24px_64px_rgba(0,0,0,0.78)] p-3.5 sm:p-5 flex flex-col gap-3 sm:gap-4"
-        style={{
-          clipPath:
-            'polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%)',
-        }}
-      >
-        {/* Top Bar: Brand + Live World Clock */}
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2.5">
-          <div className="flex items-baseline gap-2.5 min-w-0">
-            <h2 className="font-display italic text-lg sm:text-2xl font-bold tracking-wider text-white whitespace-nowrap">
-              REAL FUMA 3
-            </h2>
-            <span className="text-slate-600" aria-hidden="true">
-              ·
+    <div className="fixed inset-0 z-40 bg-[#050810]/52 backdrop-blur-md overflow-y-auto flex flex-col justify-between px-3 py-2.5 sm:px-6 sm:py-4 lg:px-10 lg:py-6">
+      {/* Top Status Strip (Car PI + Car Name left | Rank Level + Driver + Credits right) */}
+      <header className="w-full max-w-[1120px] mx-auto flex items-center justify-between gap-4 text-white shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="inline-flex items-stretch font-display font-bold text-[11px] sm:text-xs tracking-wider shrink-0 shadow-md">
+            <span className={`${perfClass.colorClass} px-2 py-0.5 flex items-center`}>
+              {perfClass.letter}
             </span>
-            <span className="text-[11px] sm:text-xs font-display tracking-[0.2em] text-rose-400 uppercase whitespace-nowrap">
-              Paused
+            <span className="bg-white text-[#0b1019] px-2 py-0.5 font-mono-num tabular-nums flex items-center">
+              {perfClass.pi}
             </span>
           </div>
-
-          <div className="flex items-center gap-3 shrink-0 tabular-nums">
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <span className="hidden sm:inline font-display tracking-wider text-[10px] uppercase">
-                World Time
-              </span>
-              <span className="font-mono-num text-sm font-bold text-amber-300">
-                {cycleTimeLabel}
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                audioEngine.playUiClick();
-                onResume();
-              }}
-              className="hidden sm:inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-display italic font-bold tracking-wider text-xs px-4 py-2 min-h-[36px] cursor-pointer transition-colors whitespace-nowrap"
-              style={{
-                clipPath: 'polygon(8% 0%, 100% 0%, 92% 100%, 0% 100%)',
-              }}
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              Resume
-            </button>
-          </div>
+          <span className="font-display font-bold uppercase tracking-wider text-xs sm:text-sm truncate drop-shadow">
+            {activeSpec.name}
+          </span>
+          <span className="hidden md:inline text-white/45" aria-hidden="true">
+            ·
+          </span>
+          <span className="hidden md:inline font-display uppercase tracking-wider text-[11px] text-slate-200 whitespace-nowrap">
+            {regionName} · <span className="font-mono-num text-[#fde047]">{cycleTimeLabel}</span>
+          </span>
         </div>
 
-        {/* 2-Column Landscape Command Deck */}
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 sm:gap-4 items-stretch">
-          {/* Left Column: Primary Drive & Navigation Actions */}
-          <div className="sm:col-span-6 flex flex-col justify-between gap-2">
+        <div className="flex items-center gap-3 sm:gap-4 shrink-0 font-display text-xs sm:text-sm tabular-nums drop-shadow">
+          <div className="flex items-center gap-1.5">
+            <span className="bg-emerald-500 text-[#04140a] font-extrabold px-1.5 py-0.5 text-[11px] font-mono-num">
+              {driverLevel}
+            </span>
+            <span className="font-semibold tracking-wide text-white truncate max-w-[110px] sm:max-w-none">
+              {save?.driverName ?? 'FUMA_RACER'}
+            </span>
+          </div>
+          <span className="text-white/35 hidden sm:inline" aria-hidden="true">
+            ·
+          </span>
+          <div className="hidden sm:flex items-center gap-1.5 font-mono-num font-bold text-white">
+            <span className="text-[10px] font-display font-bold bg-white/90 text-[#0b1019] px-1 py-0.5 leading-none">
+              CR
+            </span>
+            <span>{(save?.money ?? 0).toLocaleString()}</span>
+          </div>
+          <div className="hidden md:flex items-center gap-1 font-mono-num font-bold text-cyan-300">
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>{(save?.fumaShards ?? 0).toLocaleString()}</span>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Centered Horizon Bento Command Console */}
+      <main className="w-full max-w-[1120px] mx-auto my-auto py-2 sm:py-3 flex flex-col gap-2">
+        {/* Horizontal Tab Navigation Bar */}
+        <nav
+          aria-label="Pause Menu Sections"
+          className="flex items-stretch gap-[2px] overflow-x-auto"
+        >
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              onResume();
+            }}
+            title="Resume Driving"
+            aria-label="Resume Driving"
+            className="bg-[#0b0e15]/92 hover:bg-[#fde047] text-white hover:text-[#090d16] px-3 sm:px-3.5 min-h-[34px] sm:min-h-[38px] flex items-center justify-center transition-colors cursor-pointer shrink-0 border-r border-white/10"
+          >
+            <Pause className="w-3.5 h-3.5 fill-current" />
+          </button>
+
+          {PAUSE_TABS.map((tab) => {
+            const active = tab.id === activeTab;
+            const showBadge =
+              (tab.id === 'progress' || tab.id === 'home') && claimableQuestsCount > 0;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  audioEngine.playUiClick();
+                  setActiveTab(tab.id);
+                }}
+                className={`relative px-3.5 sm:px-5 min-h-[34px] sm:min-h-[38px] font-display font-bold tracking-[0.08em] text-[11px] sm:text-xs uppercase whitespace-nowrap shrink-0 cursor-pointer transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-white ${
+                  active
+                    ? 'bg-[#fde047] text-[#090d16]'
+                    : 'bg-[#0b0e15]/90 text-slate-200 hover:bg-[#1a2232] hover:text-white'
+                }`}
+              >
+                {tab.label}
+                {showBadge && (
+                  <span
+                    className="absolute -top-1 -right-0.5 bg-[#f97316] text-white font-mono-num text-[9px] font-extrabold w-4 h-4 flex items-center justify-center shadow"
+                    aria-label={`${claimableQuestsCount} claimable rewards`}
+                  >
+                    {claimableQuestsCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* TAB 1: HOME — Immediate Horizon Action Mosaic */}
+        {activeTab === 'home' && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 sm:gap-1.5">
+            {/* Row 1, Tile 1 (2 cols): RESUME DRIVING + Road Trip Progress Graphic */}
             <button
               onClick={() => {
                 audioEngine.playUiClick();
                 onResume();
               }}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-[#f43f5e] to-[#e11d48] hover:brightness-110 text-white font-display italic font-bold tracking-[0.14em] uppercase text-xs sm:text-sm min-h-[42px] px-4 cursor-pointer transition-all shadow-lg shadow-rose-950/50 whitespace-nowrap"
+              className="group relative col-span-2 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-[#fde047]"
             >
-              <Play className="w-4 h-4 fill-current shrink-0" />
-              Resume Driving
+              <svg
+                viewBox="0 0 260 120"
+                className="absolute right-0 bottom-0 w-48 sm:w-56 h-24 sm:h-28 text-slate-900/[0.08] pointer-events-none"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M0 120 L55 72 L105 94 L175 44 L260 88 L260 120 Z" />
+                <path d="M115 120 C125 98, 155 82, 168 62 L179 64 C166 86, 145 102, 138 120 Z" />
+                <circle cx="174" cy="40" r="18" />
+              </svg>
+              <div className="relative z-10 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase leading-none">
+                    RESUME DRIVING
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-600 font-medium mt-1">
+                    {regionName} · {cycleTimeLabel}
+                  </p>
+                </div>
+                <span className="bg-[#0b1019] group-hover:bg-[#e11d48] text-white w-8 h-8 flex items-center justify-center transition-colors shrink-0">
+                  <Play className="w-4 h-4 fill-current" />
+                </span>
+              </div>
+              <div className="relative z-10 flex items-center justify-between text-[11px] font-display font-bold uppercase tracking-wider text-slate-700">
+                <span>Return to Highway</span>
+                <span className="font-mono-num text-slate-500">ESC</span>
+              </div>
             </button>
 
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onOpenPhotoMode();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-sky-600/85 hover:bg-sky-500 text-white font-display font-bold tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <Aperture className="w-3.5 h-3.5 shrink-0" />
-                Photo Mode
-              </button>
+            {/* Row 1, Tile 2 (1 col): TRACK MAP */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenMap();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <MapPin
+                className="absolute -right-3 -bottom-3 w-20 h-20 sm:w-24 sm:h-24 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                TRACK MAP
+              </h3>
+              <div className="relative z-10">
+                <div className="font-mono-num text-sm sm:text-base font-bold text-[#0b1019] tabular-nums">
+                  {unlockedCount}/{REGIONS.length} Zones
+                </div>
+                <div className="text-[10px] sm:text-[11px] text-slate-600 font-medium">
+                  Fast Travel & Events
+                </div>
+              </div>
+            </button>
 
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onRestart();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                Restart
-              </button>
+            {/* Row 1, Tile 3 (2 cols): PHOTO MODE Photo Tile */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenPhotoMode();
+              }}
+              className="group relative col-span-2 text-white p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <PhotoTileBackdrop
+                src={horizonPhotoModeImg}
+                alt="Coastal cliff highway photo mode showcase"
+                fallbackGradient="bg-gradient-to-br from-sky-900 via-slate-900 to-amber-900"
+              />
+              <div className="relative z-10 flex items-start justify-between gap-2">
+                <h3 className="font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase leading-tight drop-shadow">
+                  PHOTO MODE
+                </h3>
+                <Aperture className="w-5 h-5 text-white/90 shrink-0" />
+              </div>
+              <div className="relative z-10 text-[11px] sm:text-xs text-slate-100 font-medium drop-shadow">
+                Free Camera · Filters · Shutter
+              </div>
+            </button>
 
-              {onOpenQuests && (
+            {/* Row 1, Tile 4 (1 col): RESTART SESSION */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onRestart();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <RotateCcw
+                className="absolute -right-3 -bottom-3 w-20 h-20 sm:w-24 sm:h-24 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                RESTART
+              </h3>
+              <div className="relative z-10 text-[10px] sm:text-[11px] text-slate-600 font-medium">
+                Reset Event & Grid
+              </div>
+            </button>
+
+            {/* Row 2, Tile 1 (2 cols): CAR & RADIO Photo Tile */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                setActiveTab('garage_radio');
+              }}
+              className="group relative col-span-2 text-white p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <PhotoTileBackdrop
+                src={horizonPromoHeadlightImg}
+                alt="Supercar front LED headlight detail"
+                fallbackGradient="bg-gradient-to-br from-slate-800 via-zinc-900 to-black"
+              />
+              <div className="relative z-10 flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase leading-none drop-shadow">
+                    CAR & RADIO
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-200 mt-1 truncate max-w-[240px]">
+                    {stationMeta.name} · {stationMeta.freq}
+                  </p>
+                </div>
+                <Radio className="w-5 h-5 text-[#fde047] shrink-0" />
+              </div>
+              <div className="relative z-10 text-[10px] sm:text-[11px] text-slate-200 truncate">
+                {radioStation === 'off' ? 'Radio Off' : currentTrack}
+              </div>
+            </button>
+
+            {/* Row 2, Tile 2 (1 col): RESET CAR TO ROAD */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onResetCar();
+                onResume();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <Car
+                className="absolute -right-3 -bottom-3 w-20 h-20 sm:w-24 sm:h-24 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                RESET CAR
+              </h3>
+              <div className="relative z-10 text-[10px] sm:text-[11px] text-slate-600 font-medium">
+                Recover to Road
+              </div>
+            </button>
+
+            {/* Row 2, Tile 3 (1 col): QUESTS / SETTINGS */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                if (onOpenQuests) {
+                  onOpenQuests();
+                } else {
+                  onOpenSettings();
+                }
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <ScrollText
+                className="absolute -right-3 -bottom-3 w-20 h-20 sm:w-24 sm:h-24 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <div className="relative z-10 flex items-start justify-between gap-1">
+                <h3 className="font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                  {onOpenQuests ? 'QUESTS' : 'SETTINGS'}
+                </h3>
+                {claimableQuestsCount > 0 && (
+                  <span className="bg-[#f97316] text-white font-mono-num text-[10px] font-extrabold px-1.5 py-0.5">
+                    {claimableQuestsCount}
+                  </span>
+                )}
+              </div>
+              <div className="relative z-10 text-[10px] sm:text-[11px] text-slate-600 font-medium">
+                {claimableQuestsCount > 0
+                  ? `${claimableQuestsCount} Claimable`
+                  : 'Challenges & Shards'}
+              </div>
+            </button>
+
+            {/* Row 2, Tile 4 (2 cols, Signature Electric Yellow): ATMOSPHERE & CONDITIONS */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                setActiveTab('atmosphere');
+              }}
+              className="group relative col-span-2 bg-[#fde047] hover:bg-[#fef08a] text-[#0b1019] p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer transition-transform duration-150 active:scale-[0.99]"
+            >
+              <div className="relative z-10 flex items-start justify-between gap-2">
+                <h3 className="font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase leading-none">
+                  WEATHER & TIME
+                </h3>
+                <div className="flex items-center gap-1.5">
+                  {weatherBadgeIcon(weather, 'w-4 h-4')}
+                  {timeBadgeIcon(timeOfDay, 'w-4 h-4')}
+                </div>
+              </div>
+              <div className="relative z-10 grid grid-cols-3 gap-2 pt-2 border-t border-black/15">
+                <div>
+                  <div className="text-[9px] sm:text-[10px] uppercase font-bold text-black/60">
+                    Sky
+                  </div>
+                  <div className="text-xs sm:text-sm font-display font-extrabold uppercase truncate">
+                    {weather.replace('_', ' ')}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[9px] sm:text-[10px] uppercase font-bold text-black/60">
+                    Hour
+                  </div>
+                  <div className="text-xs sm:text-sm font-display font-extrabold uppercase">
+                    {timeOfDay}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[9px] sm:text-[10px] uppercase font-bold text-black/60">
+                    Beams
+                  </div>
+                  <div className="text-xs sm:text-sm font-display font-extrabold uppercase">
+                    {headlightsOn ? 'Lights On' : 'Lights Off'}
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* TAB 2: WEATHER & TIME — Direct Atmosphere Grid */}
+        {activeTab === 'atmosphere' && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 sm:gap-1.5">
+            {WEATHER_OPTIONS.map((opt) => {
+              const selected = weather === opt.id;
+              return (
                 <button
+                  key={opt.id}
                   onClick={() => {
                     audioEngine.playUiClick();
-                    onOpenQuests();
+                    onCycleWeather(opt.id, timeOfDay);
                   }}
-                  className="flex items-center justify-center gap-1.5 bg-violet-700/85 hover:bg-violet-600 text-white font-display font-bold tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap"
+                  className={`col-span-1 p-3 sm:p-3.5 min-h-[84px] sm:min-h-[124px] lg:min-h-[150px] flex flex-col justify-between text-left cursor-pointer transition-colors ${
+                    selected
+                      ? 'bg-[#fde047] text-[#090d16]'
+                      : 'bg-[#f5f6f8] hover:bg-white text-[#0b1019]'
+                  }`}
                 >
-                  <ScrollText className="w-3.5 h-3.5 shrink-0" />
-                  Quests
+                  <div className="flex items-start justify-between">
+                    <span className="font-display font-extrabold text-xs sm:text-sm uppercase leading-tight">
+                      {opt.label}
+                    </span>
+                    {weatherBadgeIcon(opt.id, 'w-4 h-4 shrink-0')}
+                  </div>
+                  <div className="text-[10px] font-display font-bold uppercase tracking-wider opacity-75">
+                    {selected ? 'Active Condition' : 'Select Sky'}
+                  </div>
                 </button>
-              )}
+              );
+            })}
 
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onOpenMap();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                Track Map
-              </button>
-
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onOpenSettings();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <Settings className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                Settings
-              </button>
-
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onResetCar();
-                  onResume();
-                }}
-                className={`flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display tracking-wider uppercase text-[11px] min-h-[40px] px-3 cursor-pointer transition-colors whitespace-nowrap ${
-                  !onOpenQuests ? 'col-span-2' : ''
-                }`}
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                Reset Car
-              </button>
-            </div>
+            {TIME_OPTIONS.map((tOpt) => {
+              const selected = timeOfDay === tOpt.id;
+              return (
+                <button
+                  key={tOpt.id}
+                  onClick={() => {
+                    audioEngine.playUiClick();
+                    onCycleWeather(weather, tOpt.id);
+                  }}
+                  className={`col-span-1 p-3 sm:p-3.5 min-h-[84px] sm:min-h-[124px] lg:min-h-[150px] flex flex-col justify-between text-left cursor-pointer transition-colors ${
+                    selected
+                      ? 'bg-[#fde047] text-[#090d16]'
+                      : 'bg-[#f5f6f8] hover:bg-white text-[#0b1019]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <span className="font-display font-extrabold text-xs sm:text-sm uppercase leading-tight">
+                      {tOpt.label}
+                    </span>
+                    {timeBadgeIcon(tOpt.id, 'w-4 h-4 shrink-0')}
+                  </div>
+                  <div className="text-[10px] font-display font-bold uppercase tracking-wider opacity-75">
+                    {selected ? cycleTimeLabel : 'Jump Time'}
+                  </div>
+                </button>
+              );
+            })}
 
             <button
               onClick={() => {
                 audioEngine.playUiClick();
-                onExitToMenu();
+                onToggleDayNightCycle();
               }}
-              className="w-full flex items-center justify-center gap-2 bg-slate-950/90 hover:bg-slate-900 border border-slate-800 text-slate-300 hover:text-white font-display tracking-wider uppercase text-[11px] min-h-[40px] px-4 cursor-pointer transition-colors whitespace-nowrap"
+              className="col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[84px] sm:min-h-[124px] lg:min-h-[150px] flex flex-col justify-between text-left cursor-pointer"
             >
-              <Warehouse className="w-3.5 h-3.5 shrink-0" />
-              Return to Main Menu
+              <div className="flex items-start justify-between">
+                <span className="font-display font-extrabold text-xs sm:text-sm uppercase leading-tight">
+                  TIME CYCLE
+                </span>
+                <Compass className="w-4 h-4 shrink-0 text-slate-600" />
+              </div>
+              <div className="font-display font-extrabold text-sm uppercase">
+                {autoDayNightCycle ? 'Dynamic Auto' : 'Locked'}
+              </div>
+            </button>
+
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onToggleHeadlights();
+              }}
+              className={`col-span-1 p-3 sm:p-3.5 min-h-[84px] sm:min-h-[124px] lg:min-h-[150px] flex flex-col justify-between text-left cursor-pointer ${
+                headlightsOn
+                  ? 'bg-[#0b0e15] text-white border border-sky-400/60'
+                  : 'bg-[#f5f6f8] hover:bg-white text-[#0b1019]'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <span className="font-display font-extrabold text-xs sm:text-sm uppercase leading-tight">
+                  HEADLIGHTS
+                </span>
+                <Lightbulb
+                  className={`w-4 h-4 shrink-0 ${
+                    headlightsOn ? 'text-[#fde047]' : 'text-slate-500'
+                  }`}
+                />
+              </div>
+              <div className="font-display font-extrabold text-sm uppercase">
+                {headlightsOn ? 'High Beams On' : 'Beams Off'}
+              </div>
             </button>
           </div>
+        )}
 
-          {/* Right Column: Atmosphere Controls + Radio Tuner */}
-          <div className="sm:col-span-6 flex flex-col justify-between gap-2.5">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  nextWeather();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display text-[11px] uppercase min-h-[40px] px-2.5 cursor-pointer transition-colors whitespace-nowrap truncate"
-              >
-                <CloudRain className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                <span className="truncate">{weather.replace('_', ' ')}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  nextTime();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display text-[11px] uppercase min-h-[40px] px-2.5 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <Sun className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>{timeOfDay}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onToggleDayNightCycle();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display text-[11px] uppercase min-h-[40px] px-2.5 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <Sun
-                  className={`w-3.5 h-3.5 shrink-0 ${
-                    autoDayNightCycle ? 'text-emerald-400' : 'text-slate-500'
-                  }`}
-                />
-                <span>Cycle: {autoDayNightCycle ? 'Auto' : 'Locked'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  audioEngine.playUiClick();
-                  onToggleHeadlights();
-                }}
-                className="flex items-center justify-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display text-[11px] uppercase min-h-[40px] px-2.5 cursor-pointer transition-colors whitespace-nowrap"
-              >
-                <Lightbulb
-                  className={`w-3.5 h-3.5 shrink-0 ${
-                    headlightsOn ? 'text-sky-400' : 'text-slate-500'
-                  }`}
-                />
-                <span>Lights {headlightsOn ? 'On' : 'Off'}</span>
-              </button>
-
-              {fullscreenSupported && onToggleFullscreen && (
-                <button
-                  onClick={() => {
-                    audioEngine.playUiClick();
-                    onToggleFullscreen();
-                  }}
-                  className="col-span-2 flex items-center justify-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-display text-[11px] uppercase min-h-[38px] px-3 cursor-pointer transition-colors whitespace-nowrap"
-                >
-                  {isFullscreen ? (
-                    <>
-                      <Minimize2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      Fullscreen On · Tap to Exit
-                    </>
-                  ) : (
-                    <>
-                      <Maximize2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                      Enter Fullscreen
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-
-            {/* Compact Radio Tuner */}
-            <div className="bg-slate-950/85 border border-white/10 p-3 flex flex-col gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Radio
-                    className="w-4 h-4 shrink-0"
-                    style={{ color: stationMeta.accentHex }}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 text-xs font-display font-bold text-white truncate">
-                      <span className="truncate">{stationMeta.name}</span>
-                      <span className="text-slate-500" aria-hidden="true">
-                        ·
-                      </span>
-                      <span className="font-mono-num text-[11px] text-sky-300 tabular-nums shrink-0">
-                        {stationMeta.freq}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate">
-                      {stationMeta.genre} — {currentTrack}
-                    </div>
+        {/* TAB 3: CAR & RADIO — Radio Stations, Volume & Vehicle Spec */}
+        {activeTab === 'garage_radio' && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 sm:gap-1.5">
+            {/* 3 cols: Radio Tuner */}
+            <div className="col-span-2 sm:col-span-3 bg-[#f5f6f8] text-[#0b1019] p-3.5 sm:p-4 min-h-[168px] sm:min-h-[258px] lg:min-h-[314px] flex flex-col justify-between">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-display font-bold uppercase tracking-widest text-slate-500">
+                    Horizon Festival Broadcast
                   </div>
+                  <h3 className="font-display font-extrabold text-lg sm:text-xl uppercase tracking-wide truncate">
+                    {stationMeta.name} · {stationMeta.freq}
+                  </h3>
+                  <p className="text-xs text-slate-600 truncate">
+                    {stationMeta.genre} — {currentTrack}
+                  </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => cycleStation(-1)}
-                    title="Previous Station"
                     aria-label="Previous Radio Station"
-                    className="p-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+                    className="w-8 h-8 bg-[#0b1019] hover:bg-slate-800 text-white flex items-center justify-center cursor-pointer"
                   >
-                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <ChevronLeft className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => cycleStation(1)}
-                    title="Next Station"
                     aria-label="Next Radio Station"
-                    className="p-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer"
+                    className="w-8 h-8 bg-[#0b1019] hover:bg-slate-800 text-white flex items-center justify-center cursor-pointer"
                   >
-                    <ChevronRight className="w-3.5 h-3.5" />
+                    <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-5 gap-1">
+              <div className="grid grid-cols-5 gap-1.5 my-2">
                 {RADIO_STATIONS.map((st) => {
                   const active = st.id === radioStation;
                   return (
@@ -389,12 +787,11 @@ export const PauseModal: React.FC<PauseModalProps> = ({
                         audioEngine.init();
                         onChangeRadioStation(st.id);
                       }}
-                      className={`py-1 px-1 text-[10px] font-display font-bold tracking-wider truncate border cursor-pointer ${
+                      className={`py-2 px-1 font-display font-bold text-[11px] uppercase tracking-wider cursor-pointer transition-colors truncate ${
                         active
-                          ? 'bg-rose-600 border-rose-400 text-white'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-100'
+                          ? 'bg-[#fde047] text-[#090d16]'
+                          : 'bg-[#0b1019]/10 hover:bg-[#0b1019]/20 text-[#0b1019]'
                       }`}
-                      title={`${st.name} (${st.freq})`}
                     >
                       {st.id === 'off' ? 'OFF' : st.freq.split(' ')[0]}
                     </button>
@@ -402,14 +799,14 @@ export const PauseModal: React.FC<PauseModalProps> = ({
                 })}
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-3 pt-2 border-t border-black/10">
                 {radioVolume <= 0.01 || radioStation === 'off' ? (
-                  <VolumeX className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <VolumeX className="w-4 h-4 text-slate-500 shrink-0" />
                 ) : (
-                  <Volume2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                  <Volume2 className="w-4 h-4 text-[#0b1019] shrink-0" />
                 )}
-                <span className="text-[10px] font-display tracking-wider text-slate-400 shrink-0 uppercase">
-                  Radio
+                <span className="font-display font-bold text-xs uppercase tracking-wider shrink-0">
+                  Volume
                 </span>
                 <input
                   type="range"
@@ -422,16 +819,481 @@ export const PauseModal: React.FC<PauseModalProps> = ({
                     onChangeRadioVolume(parseFloat(e.target.value));
                   }}
                   aria-label="Radio Volume"
-                  className="flex-1 accent-rose-600 cursor-pointer"
+                  className="flex-1 accent-[#0b1019] cursor-pointer"
                 />
-                <span className="font-mono-num text-[11px] text-slate-200 tabular-nums w-8 text-right">
+                <span className="font-mono-num text-xs font-bold tabular-nums w-9 text-right">
                   {Math.round(radioVolume * 100)}%
                 </span>
               </div>
             </div>
+
+            {/* 3 cols: Active Vehicle Telemetry + Photo Tile + Recovery */}
+            <div className="col-span-2 sm:col-span-3 grid grid-cols-2 gap-1 sm:gap-1.5">
+              <div className="group relative col-span-2 text-white p-3.5 sm:p-4 min-h-[100px] sm:min-h-[150px] flex flex-col justify-between overflow-hidden">
+                <PhotoTileBackdrop
+                  src={horizonPromoHeadlightImg}
+                  alt={activeSpec.name}
+                  fallbackGradient="bg-gradient-to-br from-slate-800 to-black"
+                />
+                <div className="relative z-10 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-display uppercase tracking-widest text-[#fde047]">
+                      {activeSpec.brand}
+                    </div>
+                    <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                      {activeSpec.name}
+                    </h3>
+                  </div>
+                  <span className="font-mono-num font-bold text-xs bg-white text-[#0b1019] px-2 py-0.5">
+                    {perfClass.letter} {perfClass.pi}
+                  </span>
+                </div>
+                <div className="relative z-10 grid grid-cols-3 gap-2 text-xs font-mono-num tabular-nums">
+                  <div>
+                    <div className="text-[9px] font-display uppercase text-slate-300">
+                      Power
+                    </div>
+                    <div className="font-bold">{activeSpec.horsepower} HP</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-display uppercase text-slate-300">
+                      Top Speed
+                    </div>
+                    <div className="font-bold">{activeSpec.topSpeedKmh} KM/H</div>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-display uppercase text-slate-300">
+                      Odometer
+                    </div>
+                    <div className="font-bold">
+                      {(activeCarData?.mileageKm ?? 0).toFixed(1)} KM
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  audioEngine.playUiClick();
+                  onResetCar();
+                  onResume();
+                }}
+                className="col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 min-h-[72px] sm:min-h-[102px] flex flex-col justify-between text-left cursor-pointer"
+              >
+                <span className="font-display font-extrabold text-xs sm:text-sm uppercase">
+                  RESET TO ROAD
+                </span>
+                <span className="text-[10px] text-slate-600">Place car upright</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  audioEngine.playUiClick();
+                  onOpenPhotoMode();
+                }}
+                className="col-span-1 bg-[#fde047] hover:bg-[#fef08a] text-[#090d16] p-3 min-h-[72px] sm:min-h-[102px] flex flex-col justify-between text-left cursor-pointer"
+              >
+                <span className="font-display font-extrabold text-xs sm:text-sm uppercase">
+                  SHOOT CAR
+                </span>
+                <span className="text-[10px] text-black/75 font-semibold">
+                  Open Photo Mode
+                </span>
+              </button>
+            </div>
           </div>
+        )}
+
+        {/* TAB 4: PROGRESS — Direct Horizon Reference Layout (White / Photo / Yellow Tiles) */}
+        {activeTab === 'progress' && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 sm:gap-1.5">
+            {/* Row 1, Tile 1 (2 cols): ROAD TRIP PROGRESS */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenMap();
+              }}
+              className="group relative col-span-2 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <svg
+                viewBox="0 0 260 120"
+                className="absolute right-0 bottom-0 w-48 sm:w-56 h-24 sm:h-28 text-slate-900/[0.08] pointer-events-none"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M0 120 L55 72 L105 94 L175 44 L260 88 L260 120 Z" />
+                <circle cx="174" cy="40" r="18" />
+              </svg>
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase">
+                ROAD TRIP PROGRESS
+              </h3>
+              <div className="relative z-10 flex items-baseline gap-2 font-mono-num tabular-nums">
+                <span className="text-base sm:text-lg font-extrabold">
+                  {unlockedCount}/{REGIONS.length}
+                </span>
+                <span className="text-[11px] font-display font-semibold text-slate-600 uppercase">
+                  Coastal Regions Discovered
+                </span>
+              </div>
+            </button>
+
+            {/* Row 1, Tile 2 (1 col): QUESTS / WHEELSPIN */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenQuests?.();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <Sparkles
+                className="absolute -right-3 -bottom-3 w-20 h-20 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <div className="relative z-10 flex items-start justify-between gap-1">
+                <h3 className="font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                  SHARD QUESTS
+                </h3>
+                {claimableQuestsCount > 0 && (
+                  <span className="bg-[#f97316] text-white font-mono-num text-[10px] font-extrabold px-1.5 py-0.5">
+                    {claimableQuestsCount}
+                  </span>
+                )}
+              </div>
+              <div className="relative z-10 font-mono-num text-sm font-bold tabular-nums">
+                {(save?.fumaShards ?? 0).toLocaleString()} Shards
+              </div>
+            </button>
+
+            {/* Row 1, Tile 3 (2 cols): BUCKET LIST Photo Tile */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenMap();
+              }}
+              className="group relative col-span-2 text-white p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <PhotoTileBackdrop
+                src={horizonBucketListImg}
+                alt="Red supercar overlooking coastal cliffs"
+                fallbackGradient="bg-gradient-to-br from-rose-900 via-amber-900 to-slate-900"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase drop-shadow">
+                BUCKET LIST
+              </h3>
+              <div className="relative z-10 text-[11px] sm:text-xs font-medium text-slate-100 drop-shadow tabular-nums">
+                {completedEventsCount}/{RACE_EVENTS.length} Loop Challenges Cleared
+              </div>
+            </button>
+
+            {/* Row 1, Tile 4 (1 col): ACHIEVEMENTS */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenQuests?.();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <Trophy
+                className="absolute -right-3 -bottom-3 w-20 h-20 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                ACHIEVEMENTS
+              </h3>
+              <div className="relative z-10 font-mono-num text-sm font-bold tabular-nums">
+                {achievementsCount}/{ACHIEVEMENTS_LIST.length} Unlocked
+              </div>
+            </button>
+
+            {/* Row 2, Tile 1 (2 cols): CAR PROMO / GARAGE Photo Tile */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                setActiveTab('garage_radio');
+              }}
+              className="group relative col-span-2 text-white p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <PhotoTileBackdrop
+                src={horizonPromoHeadlightImg}
+                alt="Horizon Car Promo"
+                fallbackGradient="bg-gradient-to-br from-zinc-800 to-black"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase drop-shadow">
+                CAR PROMO
+              </h3>
+              <div className="relative z-10 text-[11px] sm:text-xs font-medium text-slate-100 drop-shadow tabular-nums">
+                {ownedCarsCount}/{CAR_CATALOG.length} Vehicles Owned
+              </div>
+            </button>
+
+            {/* Row 2, Tile 2 (1 col): PERKS & RANK */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenQuests?.();
+              }}
+              className="group relative col-span-1 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <div
+                className="absolute -right-4 -bottom-4 w-20 h-20 rounded-full border-8 border-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <div className="relative z-10 flex items-start justify-between gap-1">
+                <h3 className="font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                  PERKS
+                </h3>
+                <span className="bg-[#f97316] text-white font-mono-num text-[10px] font-extrabold px-1.5 py-0.5">
+                  Lv.{driverLevel}
+                </span>
+              </div>
+              <div className="relative z-10 text-[11px] font-display font-bold uppercase text-slate-700">
+                {playerRankLabel} Rank
+              </div>
+            </button>
+
+            {/* Row 2, Tile 3 (1 col): STATS */}
+            <div className="relative col-span-1 bg-[#f5f6f8] text-[#0b1019] p-3 sm:p-3.5 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between overflow-hidden">
+              <TrendingUp
+                className="absolute -right-3 -bottom-3 w-20 h-20 text-slate-900/[0.08] pointer-events-none"
+                aria-hidden="true"
+              />
+              <h3 className="relative z-10 font-display font-extrabold text-sm sm:text-base tracking-wide uppercase leading-tight">
+                STATS
+              </h3>
+              <div className="relative z-10 space-y-0.5 font-mono-num text-[11px] font-bold tabular-nums">
+                <div>{Math.round(save?.stats.topSpeedKmh ?? 0)} KM/H Peak</div>
+                <div className="text-slate-600">
+                  {(save?.stats.totalDistanceKm ?? 0).toFixed(1)} KM Driven
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2, Tile 4 (2 cols, Signature Electric Yellow): CHAMPIONSHIPS WON */}
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenMap();
+              }}
+              className="group relative col-span-2 bg-[#fde047] hover:bg-[#fef08a] text-[#0b1019] p-3 sm:p-4 min-h-[86px] sm:min-h-[126px] lg:min-h-[154px] flex flex-col justify-between text-left overflow-hidden cursor-pointer"
+            >
+              <h3 className="font-display font-extrabold text-sm sm:text-lg tracking-wide uppercase">
+                CHAMPIONSHIPS WON
+              </h3>
+
+              <div className="flex items-end justify-between gap-2">
+                <div>
+                  <div className="grid grid-cols-5 gap-1 mb-1.5 opacity-80">
+                    {Array.from({ length: 10 }).map((_, idx) => (
+                      <Trophy
+                        key={idx}
+                        className={`w-3 h-3 ${
+                          idx < racesWonCount ? 'text-[#0b1019]' : 'text-black/20'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <div className="font-mono-num font-extrabold text-sm sm:text-base tabular-nums">
+                    {racesWonCount}/{RACE_EVENTS.length}
+                  </div>
+                  <div className="text-[10px] font-display font-extrabold uppercase">
+                    YOU
+                  </div>
+                </div>
+
+                <div className="font-display italic font-black text-xl sm:text-2xl text-black/25 px-1">
+                  VS.
+                </div>
+
+                <div className="text-right">
+                  <div className="font-mono-num font-extrabold text-sm sm:text-base tabular-nums">
+                    {topRival.score.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] font-display font-bold uppercase truncate max-w-[110px]">
+                    {topRival.name}
+                  </div>
+                </div>
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* TAB 5: SYSTEM — Settings, Fullscreen, Restart & Exit */}
+        {activeTab === 'system' && (
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 sm:gap-1.5">
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onOpenSettings();
+              }}
+              className="col-span-2 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-4 min-h-[92px] sm:min-h-[130px] lg:min-h-[154px] flex flex-col justify-between text-left cursor-pointer"
+            >
+              <div className="flex items-start justify-between">
+                <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                  SETTINGS
+                </h3>
+                <Settings className="w-5 h-5 text-slate-600" />
+              </div>
+              <p className="text-xs text-slate-600">
+                Graphics Preset · Traffic · Steering · Motion Blur · Audio
+              </p>
+            </button>
+
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onRestart();
+              }}
+              className="col-span-2 bg-[#f5f6f8] hover:bg-white text-[#0b1019] p-4 min-h-[92px] sm:min-h-[130px] lg:min-h-[154px] flex flex-col justify-between text-left cursor-pointer"
+            >
+              <div className="flex items-start justify-between">
+                <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                  RESTART SESSION
+                </h3>
+                <RotateCcw className="w-5 h-5 text-slate-600" />
+              </div>
+              <p className="text-xs text-slate-600">
+                Restart current race or coastal free roam spawn
+              </p>
+            </button>
+
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onToggleFullscreen?.();
+              }}
+              disabled={!fullscreenSupported || !onToggleFullscreen}
+              className="col-span-2 bg-[#f5f6f8] hover:bg-white disabled:opacity-50 text-[#0b1019] p-4 min-h-[92px] sm:min-h-[130px] lg:min-h-[154px] flex flex-col justify-between text-left cursor-pointer"
+            >
+              <div className="flex items-start justify-between">
+                <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                  FULLSCREEN
+                </h3>
+                {isFullscreen ? (
+                  <Minimize2 className="w-5 h-5 text-emerald-600" />
+                ) : (
+                  <Maximize2 className="w-5 h-5 text-slate-600" />
+                )}
+              </div>
+              <p className="text-xs text-slate-600">
+                {fullscreenSupported
+                  ? isFullscreen
+                    ? 'Fullscreen Active · Click to Exit'
+                    : 'Enter Fullscreen Mode'
+                  : 'Browser manages viewport sizing'}
+              </p>
+            </button>
+
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onResume();
+              }}
+              className="col-span-2 sm:col-span-3 bg-[#fde047] hover:bg-[#fef08a] text-[#090d16] p-4 min-h-[84px] sm:min-h-[124px] lg:min-h-[146px] flex flex-col justify-between text-left cursor-pointer"
+            >
+              <div className="flex items-start justify-between">
+                <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                  RESUME DRIVING
+                </h3>
+                <Play className="w-5 h-5 fill-current" />
+              </div>
+              <p className="text-xs font-semibold text-black/75">
+                Close pause menu and return immediately to {regionName}
+              </p>
+            </button>
+
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onExitToMenu();
+              }}
+              className="col-span-2 sm:col-span-3 bg-[#101520] hover:bg-[#e11d48] text-white border border-white/15 p-4 min-h-[84px] sm:min-h-[124px] lg:min-h-[146px] flex flex-col justify-between text-left cursor-pointer transition-colors"
+            >
+              <div className="flex items-start justify-between">
+                <h3 className="font-display font-extrabold text-base sm:text-lg uppercase">
+                  RETURN TO MAIN MENU
+                </h3>
+                <Power className="w-5 h-5" />
+              </div>
+              <p className="text-xs text-slate-300">
+                Leave current drive and enter main showcase menu
+              </p>
+            </button>
+          </div>
+        )}
+      </main>
+
+      {/* Bottom Action Hint Strip (Matches Horizon bottom control hints + quick actions) */}
+      <footer className="w-full max-w-[1120px] mx-auto flex flex-wrap items-center justify-between gap-3 text-xs text-white/90 font-display shrink-0">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              onResume();
+            }}
+            className="inline-flex items-center gap-1.5 hover:text-[#fde047] cursor-pointer whitespace-nowrap"
+          >
+            <span className="bg-emerald-500 text-[#05140a] font-extrabold text-[10px] px-1.5 py-0.5 leading-none">
+              ESC
+            </span>
+            <span>Resume</span>
+          </button>
+
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              setActiveTab((prev) => {
+                const idx = PAUSE_TABS.findIndex((t) => t.id === prev);
+                return PAUSE_TABS[(idx + 1) % PAUSE_TABS.length].id;
+              });
+            }}
+            className="hidden sm:inline-flex items-center gap-1.5 hover:text-[#fde047] cursor-pointer whitespace-nowrap"
+          >
+            <span className="bg-sky-500 text-[#04121c] font-extrabold text-[10px] px-1.5 py-0.5 leading-none">
+              ←/→
+            </span>
+            <span>Switch Tab</span>
+          </button>
+
+          <button
+            onClick={() => {
+              audioEngine.playUiClick();
+              onOpenSettings();
+            }}
+            className="inline-flex items-center gap-1.5 hover:text-[#fde047] cursor-pointer whitespace-nowrap"
+          >
+            <span className="bg-[#fde047] text-[#090d16] font-extrabold text-[10px] px-1.5 py-0.5 leading-none">
+              S
+            </span>
+            <span>Settings</span>
+          </button>
+
+          {fullscreenSupported && onToggleFullscreen && (
+            <button
+              onClick={() => {
+                audioEngine.playUiClick();
+                onToggleFullscreen();
+              }}
+              className="hidden md:inline-flex items-center gap-1.5 hover:text-[#fde047] cursor-pointer whitespace-nowrap"
+            >
+              <span className="bg-white/20 text-white font-extrabold text-[10px] px-1.5 py-0.5 leading-none">
+                F
+              </span>
+              <span>{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
+            </button>
+          )}
         </div>
-      </div>
+
+        <button
+          onClick={() => {
+            audioEngine.playUiClick();
+            onExitToMenu();
+          }}
+          className="inline-flex items-center gap-1.5 bg-[#0b0e15]/85 hover:bg-rose-600 text-slate-100 hover:text-white border border-white/15 px-3 py-1 text-[11px] font-display font-bold uppercase tracking-wider cursor-pointer transition-colors whitespace-nowrap"
+        >
+          <Power className="w-3 h-3" />
+          <span>Main Menu</span>
+        </button>
+      </footer>
     </div>
   );
 };

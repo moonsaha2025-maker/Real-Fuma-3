@@ -919,6 +919,10 @@ export default function App() {
           headlightsOn={telemetry.headlightsOn}
           radioStation={save.settings.radioStation}
           radioVolume={save.settings.radioVolume}
+          regionName={telemetry.regionName}
+          save={save}
+          activeCarData={activeCarData}
+          sessionPlaySec={sessionPlaySec}
           onChangeRadioStation={(radioStation) =>
             updateSettings({ radioStation })
           }
