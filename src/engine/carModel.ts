@@ -12,15 +12,27 @@ export interface CarModelRig {
   taillightMaterial: THREE.MeshStandardMaterial;
   headlightMaterial: THREE.MeshStandardMaterial;
   nitroFlames: THREE.Mesh[];
-  setLights: (headlights: boolean, braking: boolean, nitro: boolean) => void;
+  setLights: (
+    headlights: boolean,
+    braking: boolean,
+    nitro: boolean,
+    timeSec?: number,
+    backfireOnly?: boolean,
+  ) => void;
   setWheels: (steerRad: number, spinDeltaRad: number) => void;
   setBodyTilt: (pitchRad: number, rollRad: number, heaveY: number) => void;
   setDirt: (dirtLevel: number, washProgress?: number, washFoam?: number) => void;
   setDamage: (damageLevel: number) => void;
-  getCockpitAnchors: () => {
-    eyeLocal: THREE.Vector3;
-    lookLocal: THREE.Vector3;
+  getExhaustAnchors: () => readonly THREE.Vector3[];
+  getCameraAnchors: () => {
+    cockpitEyeLocal: THREE.Vector3;
+    cockpitLookLocal: THREE.Vector3;
+    hoodEyeLocal: THREE.Vector3;
+    hoodLookLocal: THREE.Vector3;
+    bumperEyeLocal: THREE.Vector3;
+    bumperLookLocal: THREE.Vector3;
   };
+  setCockpitMode: (inCockpit: boolean) => void;
   setCockpitState: (params: {
     active: boolean;
     steerRad: number;
@@ -1030,17 +1042,22 @@ export function createCarModel(
   const bodyTrimParts: THREE.BufferGeometry[] = [];
   const chromeParts: THREE.BufferGeometry[] = [];
 
-  // Cockpit geometry & dynamic interior gauges + animated steering wheel
+  // Cockpit geometry & dynamic interior gauges + animated steering wheel + first-person anchors
   const isCabForward = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
   const driverX = W * 0.172; // Left-hand drive (+X is driver left when facing +Z)
   const eyeY = clearance + H * 0.855;
-  const eyeZ = isCabForward ? L * 0.008 : -L * 0.022;
+  const eyeZ = isCabForward ? L * 0.012 : -L * 0.008;
   const cockpitEyeLocal = new THREE.Vector3(driverX, eyeY, eyeZ);
-  const cockpitLookLocal = new THREE.Vector3(driverX, eyeY - 0.11, eyeZ + 18.0);
+  const cockpitLookLocal = new THREE.Vector3(driverX, eyeY - 0.11, eyeZ + 20.0);
+  const hoodEyeLocal = new THREE.Vector3(0, clearance + H * 0.68, L * 0.20);
+  const hoodLookLocal = new THREE.Vector3(0, clearance + H * 0.50, L * 0.20 + 24.0);
+  const bumperEyeLocal = new THREE.Vector3(0, clearance + H * 0.44, L * 0.53);
+  const bumperLookLocal = new THREE.Vector3(0, clearance + H * 0.40, L * 0.53 + 28.0);
 
   let steeringWheelRollPivot: THREE.Group | null = null;
   let gaugeTex: THREE.CanvasTexture | null = null;
   let gaugeMat: THREE.MeshStandardMaterial | null = null;
+  let cockpitGroupRef: THREE.Group | null = null;
   let updateGaugeCanvas: ((params: {
     active: boolean;
     steerRad: number;
@@ -1060,12 +1077,13 @@ export function createCarModel(
     // Bucket seats with bolsters & headrests (placed safely behind driver eyeZ)
     for (const side of [-1, 1]) {
       const sx = side * W * 0.172;
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.34, 0.36, 0.13), sx, clearance + H * 0.58, -L * 0.085, -0.22);
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.18, 0.14, 0.085), sx, clearance + H * 0.78, -L * 0.12, -0.14);
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.32, 0.34, 0.12), sx, clearance + H * 0.58, -L * 0.095, -0.22);
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.17, 0.13, 0.08), sx, clearance + H * 0.78, -L * 0.13, -0.14);
     }
 
     // Interior cockpit assembly attached to chassisGroup so pitch/roll/heave animate naturally
     const cockpitGroup = new THREE.Group();
+    cockpitGroupRef = cockpitGroup;
     chassisGroup.add(cockpitGroup);
 
     const alcantaraMat = new THREE.MeshStandardMaterial({
@@ -1086,112 +1104,120 @@ export function createCarModel(
       metalness: 0.2,
     });
 
-    const dashZ = eyeZ + 0.455;
-    const dashDeckY = clearance + H * 0.652;
-    const gaugeY = clearance + H * 0.728;
-    const swZ = eyeZ + 0.335;
-    const swY = clearance + H * 0.695;
+    const dashZ = eyeZ + 0.42;
+    const dashDeckY = clearance + H * 0.678;
+    const gaugeY = clearance + H * 0.735;
+    const swZ = eyeZ + 0.32;
+    const swY = clearance + H * 0.702;
 
-    // 1. Sculpted dashboard main shelf, lower skirt, and gauge binnacle hood cowl
+    // 1. Sculpted dashboard main shelf (narrowed cleanly inside tapered canopy) & gauge cowl
     const dashDeck = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.68, 0.095, 0.24),
+      new THREE.BoxGeometry(W * 0.48, 0.068, 0.19),
       alcantaraMat,
     );
-    dashDeck.position.set(0, dashDeckY, dashZ + 0.035);
-    dashDeck.rotation.x = 0.08;
+    dashDeck.position.set(0, dashDeckY, dashZ + 0.03);
+    dashDeck.rotation.x = 0.06;
     cockpitGroup.add(dashDeck);
 
     // Carbon fascia strip across dashboard front
     const dashFascia = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.64, 0.048, 0.035),
+      new THREE.BoxGeometry(W * 0.46, 0.040, 0.032),
       carbonMat,
     );
-    dashFascia.position.set(0, dashDeckY - 0.015, dashZ - 0.08);
+    dashFascia.position.set(0, dashDeckY - 0.008, dashZ - 0.065);
     cockpitGroup.add(dashFascia);
 
     // Subtle colored accent pin-stripe matching car body color across passenger dash
     const accentPin = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.26, 0.008, 0.014),
+      new THREE.BoxGeometry(W * 0.18, 0.008, 0.012),
       bodyMaterial,
     );
-    accentPin.position.set(-W * 0.14, dashDeckY + 0.005, dashZ - 0.095);
+    accentPin.position.set(-W * 0.105, dashDeckY + 0.005, dashZ - 0.084);
     cockpitGroup.add(accentPin);
 
     // Hooded instrument binnacle brow directly ahead of driver
     const binnacleBack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.125, 0.075),
+      new THREE.BoxGeometry(0.275, 0.122, 0.070),
       alcantaraMat,
     );
-    binnacleBack.position.set(driverX, gaugeY, dashZ - 0.01);
+    binnacleBack.position.set(driverX, gaugeY, dashZ - 0.012);
     binnacleBack.rotation.x = 0.20;
     cockpitGroup.add(binnacleBack);
 
     const binnacleVisor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.295, 0.022, 0.115),
+      new THREE.BoxGeometry(0.290, 0.020, 0.105),
       carbonMat,
     );
-    binnacleVisor.position.set(driverX, gaugeY + 0.068, dashZ - 0.035);
+    binnacleVisor.position.set(driverX, gaugeY + 0.068, dashZ - 0.032);
     binnacleVisor.rotation.x = 0.14;
     cockpitGroup.add(binnacleVisor);
 
-    // Center console bridge + slanted infotainment telemetry pod + alloy shifter stalk
+    // Center console bridge (strictly above hull spine to avoid Z-fighting) + infotainment pod
     const consoleBridge = new THREE.Mesh(
-      new THREE.BoxGeometry(0.19, 0.095, 0.56),
+      new THREE.BoxGeometry(0.17, 0.046, 0.48),
       carbonMat,
     );
-    consoleBridge.position.set(0, clearance + H * 0.618, eyeZ + 0.18);
+    consoleBridge.position.set(0, clearance + H * 0.660, eyeZ + 0.18);
     cockpitGroup.add(consoleBridge);
 
     const centerScreenFrame = new THREE.Mesh(
-      new THREE.BoxGeometry(0.14, 0.082, 0.022),
+      new THREE.BoxGeometry(0.135, 0.076, 0.022),
       alcantaraMat,
     );
-    centerScreenFrame.position.set(0, dashDeckY + 0.028, dashZ - 0.068);
+    centerScreenFrame.position.set(0, dashDeckY + 0.022, dashZ - 0.068);
     centerScreenFrame.rotation.x = 0.28;
     centerScreenFrame.rotation.y = -0.14;
     cockpitGroup.add(centerScreenFrame);
 
     const centerScreenGlow = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.122, 0.064),
-      new THREE.MeshBasicMaterial({ color: 0x0c2438 }),
+      new THREE.PlaneGeometry(0.118, 0.060),
+      new THREE.MeshBasicMaterial({
+        color: 0x0c2438,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      }),
     );
-    centerScreenGlow.position.set(0, 0, -0.012);
+    centerScreenGlow.position.set(0, 0, -0.016);
     centerScreenGlow.rotation.y = Math.PI;
     centerScreenFrame.add(centerScreenGlow);
 
     const shifterBase = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.028, 0.036, 0.024, 12),
+      new THREE.CylinderGeometry(0.026, 0.034, 0.020, 12),
       alloyTrimMat,
     );
-    shifterBase.position.set(0, clearance + H * 0.672, eyeZ + 0.22);
+    shifterBase.position.set(0, clearance + H * 0.692, eyeZ + 0.20);
     cockpitGroup.add(shifterBase);
 
     const shifterKnob = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.014, 0.011, 0.068, 10),
+      new THREE.CylinderGeometry(0.014, 0.011, 0.062, 10),
       alloyTrimMat,
     );
-    shifterKnob.position.set(0, clearance + H * 0.708, eyeZ + 0.215);
+    shifterKnob.position.set(0, clearance + H * 0.726, eyeZ + 0.195);
     shifterKnob.rotation.x = -0.16;
     cockpitGroup.add(shifterKnob);
 
-    // Interior Rearview Mirror & Top Windshield Header Strip
+    // Interior Rearview Mirror
     const mirrorHousing = new THREE.Mesh(
-      new THREE.BoxGeometry(0.165, 0.044, 0.026),
+      new THREE.BoxGeometry(0.145, 0.036, 0.022),
       alcantaraMat,
     );
-    mirrorHousing.position.set(0, clearance + H * 0.905, eyeZ + 0.36);
+    mirrorHousing.position.set(0, clearance + H * 0.916, eyeZ + 0.34);
     mirrorHousing.rotation.x = -0.12;
     cockpitGroup.add(mirrorHousing);
 
     const mirrorGlass = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.15, 0.034),
+      new THREE.PlaneGeometry(0.132, 0.028),
       new THREE.MeshStandardMaterial({
         color: 0x334155,
         metalness: 0.92,
         roughness: 0.08,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
       }),
     );
-    mirrorGlass.position.set(0, 0, -0.014);
+    mirrorGlass.position.set(0, 0, -0.016);
     mirrorGlass.rotation.y = Math.PI;
     mirrorHousing.add(mirrorGlass);
 
@@ -1320,13 +1346,16 @@ export function createCarModel(
       emissiveIntensity: 0.92,
       roughness: 0.22,
       metalness: 0.1,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
 
-    const gaugePanel = new THREE.Mesh(new THREE.PlaneGeometry(0.255, 0.114), gaugeMat);
-    gaugePanel.position.set(driverX, gaugeY + 0.002, dashZ - 0.049);
-    gaugePanel.rotation.x = 0.20;
+    // Attach directly as child of binnacleBack with 9mm clean clearance (zero Z-fighting)
+    const gaugePanel = new THREE.Mesh(new THREE.PlaneGeometry(0.255, 0.112), gaugeMat);
+    gaugePanel.position.set(0, 0, -0.044);
     gaugePanel.rotation.y = Math.PI; // Normal points toward driver (-Z) with upright non-mirrored UVs
-    cockpitGroup.add(gaugePanel);
+    binnacleBack.add(gaugePanel);
 
     let smoothedGaugeRpmNorm = 0.1;
     let smoothedGaugeSpeed = 0;
@@ -1553,8 +1582,16 @@ export function createCarModel(
       bodyMaterial,
     );
     hubBadge.rotation.x = Math.PI / 2;
-    hubBadge.position.set(0, -0.006, -0.013);
+    hubBadge.position.set(0, -0.006, -0.016);
     steeringWheelRollPivot.add(hubBadge);
+
+    // Ensure exterior directional shadow crawl never flickers across interior gauges/trim
+    cockpitGroup.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        obj.castShadow = false;
+        obj.receiveShadow = false;
+      }
+    });
   }
 
   // Flush A-pillars tucked inside windshield side edges & Flying Buttress C-pillars
@@ -1791,30 +1828,170 @@ export function createCarModel(
     }
   }
 
-  // 7. Chrome/Titanium Exhaust Tips & Dual-Core Additive Nitro Afterburners
+  // 7. Chrome/Titanium Exhaust Tips & Volumetric Multi-Stage Mach-Diamond Nitro Afterburners
   const nitroFlames: THREE.Mesh[] = [];
+  const exhaustAnchors: THREE.Vector3[] = [];
+  const nozzleGlowMeshes: THREE.Mesh[] = [];
   const exhaustMat = new THREE.MeshStandardMaterial({
     color: 0xe2e8f0,
     metalness: 0.96,
     roughness: 0.14,
   });
-  const flameOuterGeo = new THREE.ConeGeometry(0.072, 0.78, 10, 1, true);
-  flameOuterGeo.translate(0, 0.39, 0);
-  const flameInnerGeo = new THREE.ConeGeometry(0.036, 0.48, 8);
-  flameInnerGeo.translate(0, 0.24, 0);
 
-  const flameOuterMat = new THREE.MeshBasicMaterial({
-    color: 0x0ea5e9,
+  const buildPlumeLathe = (maxR: number, len: number): THREE.LatheGeometry => {
+    const pts: THREE.Vector2[] = [];
+    const steps = 14;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const expand = t < 0.16 ? THREE.MathUtils.lerp(0.62, 1.05, t / 0.16) : 1.05 * Math.pow(1 - (t - 0.16) / 0.84, 0.72);
+      const shockWave = 1 + Math.sin(t * Math.PI * 5.0) * 0.08 * (1 - t);
+      pts.push(new THREE.Vector2(Math.max(0.003, maxR * expand * shockWave), t * len));
+    }
+    return new THREE.LatheGeometry(pts, 18);
+  };
+
+  const flameOuterGeo = buildPlumeLathe(0.078, 1.12);
+  const flameInnerGeo = buildPlumeLathe(0.044, 0.78);
+  const nozzleDiscGeo = new THREE.CircleGeometry(0.041, 14);
+
+  const flameUniforms = {
+    uTime: { value: 0 },
+    uIntensity: { value: 1 },
+    uBackfire: { value: 0 },
+  };
+
+  const flameOuterMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: flameUniforms.uTime,
+      uIntensity: flameUniforms.uIntensity,
+      uBackfire: flameUniforms.uBackfire,
+    },
     transparent: true,
-    opacity: 0.78,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
+    vertexShader: `
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewDir;
+
+      void main() {
+        vUv = uv;
+        vec3 pos = position;
+        float axial = uv.y;
+        float flutter = pow(axial, 1.25);
+        float waveA = sin(axial * 19.0 - uTime * 52.0 + pos.x * 16.0);
+        float waveB = cos(axial * 27.0 - uTime * 68.0 + pos.z * 16.0);
+        pos.x += waveA * 0.018 * flutter;
+        pos.z += waveB * 0.018 * flutter;
+
+        vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
+        vViewNormal = normalize(normalMatrix * normal);
+        vViewDir = normalize(-mvPos.xyz);
+        gl_Position = projectionMatrix * mvPos;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uIntensity;
+      uniform float uBackfire;
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewDir;
+
+      void main() {
+        float t = clamp(vUv.y, 0.0, 1.0);
+        float fresnel = pow(abs(dot(normalize(vViewNormal), normalize(vViewDir))), 1.35);
+
+        // Turbulent supersonic combustion streaks & Mach shock diamonds
+        float flow = t * 14.0 - uTime * 42.0;
+        float streaks = 0.5 + 0.5 * sin(vUv.x * 18.85 + sin(flow * 0.65) * 2.2);
+        float turbulence = 0.65 + 0.35 * sin(flow * 1.4 + vUv.x * 12.56);
+        float shockDiamond = pow(max(0.0, sin(t * 22.0 - uTime * 22.0)), 4.0) * (1.0 - t * 0.8);
+
+        // Root fade-in + ragged licking tail dissolve
+        float rootIn = smoothstep(0.0, 0.08, t);
+        float tailCut = smoothstep(1.0, 0.28 + streaks * 0.22, t);
+        float alpha = rootIn * tailCut * fresnel * turbulence * uIntensity;
+        if (alpha <= 0.01) discard;
+
+        // Multi-stage Nitro color temperature (White-Cyan Plasma -> Electric Blue -> Fiery Orange/Red)
+        vec3 rootCyan = vec3(0.75, 0.96, 1.0);
+        vec3 midViolet = vec3(0.26, 0.62, 1.0);
+        vec3 flameOrange = vec3(1.0, 0.46, 0.08);
+        vec3 tailCrimson = vec3(0.95, 0.16, 0.03);
+
+        vec3 nitroCol = mix(rootCyan, midViolet, smoothstep(0.06, 0.34, t));
+        nitroCol = mix(nitroCol, flameOrange, smoothstep(0.28, 0.66, t));
+        nitroCol = mix(nitroCol, tailCrimson, smoothstep(0.62, 0.96, t));
+        nitroCol += vec3(0.55, 0.85, 1.0) * shockDiamond * 0.85;
+
+        // Backfire pop palette (molten gold-orange unburnt fuel blast)
+        vec3 bfCol = mix(vec3(1.0, 0.92, 0.55), vec3(1.0, 0.40, 0.06), smoothstep(0.08, 0.55, t));
+        bfCol = mix(bfCol, tailCrimson, smoothstep(0.52, 0.95, t));
+
+        vec3 finalRgb = mix(nitroCol, bfCol, clamp(uBackfire, 0.0, 1.0));
+        gl_FragColor = vec4(finalRgb * (1.15 + shockDiamond * 0.6), clamp(alpha * 0.86, 0.0, 1.0));
+      }
+    `,
   });
-  const flameInnerMat = new THREE.MeshBasicMaterial({
-    color: 0xe0f2fe,
+
+  const flameInnerMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: flameUniforms.uTime,
+      uIntensity: flameUniforms.uIntensity,
+      uBackfire: flameUniforms.uBackfire,
+    },
     transparent: true,
-    opacity: 0.96,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewDir;
+
+      void main() {
+        vUv = uv;
+        vec3 pos = position;
+        float flutter = pow(uv.y, 1.4);
+        pos.x += sin(uv.y * 24.0 - uTime * 64.0) * 0.009 * flutter;
+        pos.z += cos(uv.y * 24.0 - uTime * 64.0) * 0.009 * flutter;
+        vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
+        vViewNormal = normalize(normalMatrix * normal);
+        vViewDir = normalize(-mvPos.xyz);
+        gl_Position = projectionMatrix * mvPos;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uIntensity;
+      uniform float uBackfire;
+      varying vec2 vUv;
+      varying vec3 vViewNormal;
+      varying vec3 vViewDir;
+
+      void main() {
+        float t = clamp(vUv.y, 0.0, 1.0);
+        float fresnel = pow(abs(dot(normalize(vViewNormal), normalize(vViewDir))), 1.1);
+        float diamonds = 0.55 + 0.45 * pow(max(0.0, sin(t * 25.0 - uTime * 28.0)), 3.0);
+        float alpha = smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.18, t) * fresnel * uIntensity;
+        if (alpha <= 0.01) discard;
+
+        vec3 coreNitro = mix(vec3(0.96, 0.99, 1.0), vec3(0.35, 0.84, 1.0), smoothstep(0.15, 0.85, t));
+        vec3 coreBf = mix(vec3(1.0, 0.97, 0.78), vec3(1.0, 0.58, 0.14), smoothstep(0.15, 0.85, t));
+        vec3 col = mix(coreNitro, coreBf, clamp(uBackfire, 0.0, 1.0)) * (1.35 * diamonds);
+        gl_FragColor = vec4(col, clamp(alpha * 0.95, 0.0, 1.0));
+      }
+    `,
+  });
+
+  const nozzleGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8,
+    transparent: true,
+    opacity: 0.9,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
@@ -1841,9 +2018,18 @@ export function createCarModel(
     tipGeo.rotateX(Math.PI / 2);
     addPart(chromeParts, tipGeo, ex, exhaustY, -L * 0.50);
 
+    exhaustAnchors.push(new THREE.Vector3(ex, exhaustY, -L * 0.515));
+
+    const nozzleDisc = new THREE.Mesh(nozzleDiscGeo, nozzleGlowMat);
+    nozzleDisc.rotation.y = Math.PI;
+    nozzleDisc.position.set(ex, exhaustY, -L * 0.485);
+    nozzleDisc.visible = false;
+    chassisGroup.add(nozzleDisc);
+    nozzleGlowMeshes.push(nozzleDisc);
+
     const outerFlame = new THREE.Mesh(flameOuterGeo, flameOuterMat);
     outerFlame.rotation.x = -Math.PI / 2;
-    outerFlame.position.set(ex, exhaustY, -L * 0.515);
+    outerFlame.position.set(ex, exhaustY, -L * 0.505);
     outerFlame.visible = false;
 
     const innerFlame = new THREE.Mesh(flameInnerGeo, flameInnerMat);
@@ -2096,13 +2282,27 @@ export function createCarModel(
     taillightMaterial,
     headlightMaterial,
     nitroFlames,
-    setLights: (headlights, braking, nitro) => {
+    setLights: (headlights, braking, nitro, timeSec = 0, backfireOnly = false) => {
       headlightMaterial.emissiveIntensity = headlights ? 1.65 : 0.95;
       taillightMaterial.emissiveIntensity = braking ? 2.15 : headlights ? 1.25 : 0.75;
-      for (const f of nitroFlames) {
+      flameUniforms.uTime.value = timeSec;
+      flameUniforms.uBackfire.value = backfireOnly ? 1.0 : 0.0;
+      flameUniforms.uIntensity.value = backfireOnly ? 0.92 : 1.05;
+      nozzleGlowMat.color.setHex(backfireOnly ? 0xf97316 : 0x38bdf8);
+
+      for (let i = 0; i < nitroFlames.length; i++) {
+        const f = nitroFlames[i];
         f.visible = nitro;
+        if (nozzleGlowMeshes[i]) {
+          nozzleGlowMeshes[i].visible = nitro;
+        }
         if (nitro) {
-          f.scale.set(1, 0.85 + Math.random() * 0.65, 1);
+          const pulse =
+            Math.sin(timeSec * 58 + i * 2.1) * 0.12 +
+            Math.cos(timeSec * 89 + i * 1.3) * 0.08;
+          const baseLen = backfireOnly ? 0.62 : 1.05;
+          const radial = backfireOnly ? 0.92 : 1.0 + pulse * 0.35;
+          f.scale.set(radial, Math.max(0.38, baseLen + pulse), radial);
         }
       }
     },
@@ -2126,11 +2326,21 @@ export function createCarModel(
     setDamage: (damageLevel) => {
       dirtUniforms.uDamageLevel.value = THREE.MathUtils.clamp(damageLevel, 0, 1);
     },
-    getCockpitAnchors: () => ({
-      eyeLocal: cockpitEyeLocal,
-      lookLocal: cockpitLookLocal,
+    getExhaustAnchors: () => exhaustAnchors,
+    getCameraAnchors: () => ({
+      cockpitEyeLocal,
+      cockpitLookLocal,
+      hoodEyeLocal,
+      hoodLookLocal,
+      bumperEyeLocal,
+      bumperLookLocal,
     }),
+    setCockpitMode: (inCockpit) => {
+      canopyMesh.visible = !inCockpit;
+      if (cockpitGroupRef) cockpitGroupRef.visible = true;
+    },
     setCockpitState: (params) => {
+      canopyMesh.visible = !params.active;
       if (steeringWheelRollPivot) {
         // Negative Z rotation turns 12-o'clock toward +X (driver's left) when steerRad > 0
         steeringWheelRollPivot.rotation.z = -params.steerRad * 3.4;

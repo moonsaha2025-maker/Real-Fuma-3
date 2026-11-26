@@ -21,6 +21,8 @@ export interface BuiltWorld {
     nightFactor?: number,
     playerX?: number,
     playerZ?: number,
+    rainIntensity?: number,
+    fogMode?: boolean,
   ) => void;
   dispose: () => void;
 }
@@ -539,7 +541,12 @@ export function buildRealFumaWorld(
   worldGroup.add(terrainMesh);
   disposables.push(terrainGeo, terrainMat);
 
-  // 2. Seamless Closed-Loop 720-Station Asphalt Ribbon + PBR Normal & Roughness Maps
+  // 2. Seamless Closed-Loop 720-Station Asphalt Ribbon + Wet Puddle & Raindrop Ripple Shader
+  const roadWeatherUniforms = {
+    uRoadWetness: { value: 0 },
+    uRainIntensity: { value: 0 },
+    uRoadTime: { value: 0 },
+  };
   const asphaltRoadMat = new THREE.MeshStandardMaterial({
     map: textures.asphaltMap,
     normalMap: textures.asphaltNormalMap,
@@ -547,8 +554,103 @@ export function buildRealFumaWorld(
     roughnessMap: textures.asphaltRoughnessMap,
     roughness: 0.68,
     metalness: 0.1,
-    envMapIntensity: 0.94,
+    envMapIntensity: 0.96,
   });
+  asphaltRoadMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRoadWetness = roadWeatherUniforms.uRoadWetness;
+    shader.uniforms.uRainIntensity = roadWeatherUniforms.uRainIntensity;
+    shader.uniforms.uRoadTime = roadWeatherUniforms.uRoadTime;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+         varying vec3 vRoadWorldPos;
+         varying vec2 vRoadUv;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         vRoadUv = uv;
+         vRoadWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;`,
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+         uniform float uRoadWetness;
+         uniform float uRainIntensity;
+         uniform float uRoadTime;
+         varying vec3 vRoadWorldPos;
+         varying vec2 vRoadUv;
+
+         float roadHash(vec2 p) {
+           p = fract(p * vec2(123.34, 456.21));
+           p += dot(p, p + 45.32);
+           return fract(p.x * p.y);
+         }
+         float roadNoise(vec2 p) {
+           vec2 i = floor(p);
+           vec2 f = fract(p);
+           vec2 u = f * f * (3.0 - 2.0 * f);
+           return mix(
+             mix(roadHash(i), roadHash(i + vec2(1.0, 0.0)), u.x),
+             mix(roadHash(i + vec2(0.0, 1.0)), roadHash(i + vec2(1.0, 1.0)), u.x),
+             u.y
+           );
+         }
+         float roadPuddleMask(vec2 xz, vec2 uvCoord) {
+           float n = roadNoise(xz * 0.095) * 0.65 + roadNoise(xz * 0.24 + 5.2) * 0.35;
+           float rutL = exp(-pow((uvCoord.x - 0.27) * 8.5, 2.0));
+           float rutR = exp(-pow((uvCoord.x - 0.73) * 8.5, 2.0));
+           float raw = n + (rutL + rutR) * 0.16;
+           return smoothstep(0.50, 0.72, raw) * uRoadWetness;
+         }`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+         float wetPuddle = roadPuddleMask(vRoadWorldPos.xz, vRoadUv);
+         if (uRoadWetness > 0.01) {
+           float wetDarken = mix(1.0, 0.64, uRoadWetness);
+           wetDarken = mix(wetDarken, 0.44, wetPuddle);
+           diffuseColor.rgb *= wetDarken;
+         }`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>
+         if (uRoadWetness > 0.01) {
+           float puddle = roadPuddleMask(vRoadWorldPos.xz, vRoadUv);
+           roughnessFactor = mix(roughnessFactor, 0.28, uRoadWetness * 0.85);
+           roughnessFactor = mix(roughnessFactor, 0.035, puddle);
+         }`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+         if (uRainIntensity > 0.02) {
+           float puddleN = roadPuddleMask(vRoadWorldPos.xz, vRoadUv);
+           if (puddleN > 0.05) {
+             vec2 cellUv = vRoadWorldPos.xz * 2.1;
+             vec2 cellId = floor(cellUv);
+             vec2 fCell = fract(cellUv) - 0.5;
+             float hSeed = roadHash(cellId);
+             float age = fract(uRoadTime * 2.2 + hSeed * 7.3);
+             vec2 dropCtr = (vec2(hSeed, roadHash(cellId + 13.7)) - 0.5) * 0.55;
+             vec2 dVec = fCell - dropCtr;
+             float dist = length(dVec);
+             float rad = age * 0.46;
+             float wave = sin((dist - rad) * 44.0) * exp(-abs(dist - rad) * 14.0) * (1.0 - age);
+             vec2 grad = normalize(dVec + 0.0001) * wave * 0.22 * uRainIntensity * puddleN;
+             vec3 viewRipple = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
+             normal = normalize(normal + viewRipple);
+           }
+         }`,
+      );
+  };
+  asphaltRoadMat.customProgramCacheKey = () => 'asphalt_wet_puddles_v1';
   const shoulderSkirtMat = new THREE.MeshStandardMaterial({
     map: textures.concreteCurbMap,
     color: 0x94a3b8,
@@ -722,6 +824,13 @@ export function buildRealFumaWorld(
   const cableMat = new THREE.LineBasicMaterial({ color: 0xcbd5e1 });
 
   const towerGeo = new THREE.BoxGeometry(2.4, 52, 2.4);
+  const bridgeBeaconMat = new THREE.MeshStandardMaterial({
+    color: 0xff2a4b,
+    emissive: 0xff1e3d,
+    emissiveIntensity: 0.25,
+    roughness: 0.25,
+  });
+  const beaconGeo = new THREE.SphereGeometry(0.55, 8, 8);
   const pylonS = [0.815, 0.875];
   for (const ps of pylonS) {
     const pt = getRoadPointAt(ps, 0);
@@ -736,6 +845,10 @@ export function buildRealFumaWorld(
       leg.castShadow = true;
       leg.receiveShadow = true;
       pylonGroup.add(leg);
+
+      const beacon = new THREE.Mesh(beaconGeo, bridgeBeaconMat);
+      beacon.position.set(side * 10.6, pt.y + 41.5, 0);
+      pylonGroup.add(beacon);
     }
     const topCross = new THREE.Mesh(new THREE.BoxGeometry(23.5, 2.6, 2.6), bridgeAccentMat);
     topCross.position.set(0, pt.y + 39, 0);
@@ -763,7 +876,7 @@ export function buildRealFumaWorld(
     worldGroup.add(new THREE.LineSegments(cableGeo, cableMat));
     disposables.push(cableGeo);
   }
-  disposables.push(bridgeConcreteMat, bridgeAccentMat, cableMat, towerGeo);
+  disposables.push(bridgeConcreteMat, bridgeAccentMat, bridgeBeaconMat, beaconGeo, cableMat, towerGeo);
 
   // 6. Alpine Pass Stone Tunnel Gallery (s in [0.49, 0.52])
   const tunnelArchMat = new THREE.MeshStandardMaterial({
@@ -1620,19 +1733,37 @@ export function buildRealFumaWorld(
     asphaltRoadMat,
     checkpointBeacon,
     lampPositions,
-    updateDynamicWorld: (timeSec, isWet, nightFactor = 0, playerX = 0, playerZ = 0) => {
+    updateDynamicWorld: (
+      timeSec,
+      isWet,
+      nightFactor = 0,
+      playerX = 0,
+      playerZ = 0,
+      rainIntensity = 0,
+      fogMode = false,
+    ) => {
       windUniform.value = timeSec;
       playerPosUniform.value.set(playerX, playerZ);
+      roadWeatherUniforms.uRoadTime.value = timeSec;
+      roadWeatherUniforms.uRoadWetness.value +=
+        ((isWet ? 1.0 : 0.0) - roadWeatherUniforms.uRoadWetness.value) * 0.06;
+      roadWeatherUniforms.uRainIntensity.value +=
+        (rainIntensity - roadWeatherUniforms.uRainIntensity.value) * 0.1;
+
       const targetRough = isWet ? 0.22 : 0.68;
-      const targetMetal = isWet ? 0.3 : 0.1;
+      const targetMetal = isWet ? 0.36 : 0.1;
       asphaltRoadMat.roughness += (targetRough - asphaltRoadMat.roughness) * 0.08;
       asphaltRoadMat.metalness += (targetMetal - asphaltRoadMat.metalness) * 0.08;
+      asphaltRoadMat.envMapIntensity = isWet ? 1.45 : 0.96;
 
-      // Nocturnal building window glow + coastal streetlamp ignition
-      shaftMat.emissiveIntensity = nightFactor * 1.15;
+      // Nocturnal building window glow + coastal streetlamp ignition + bridge warning beacons
+      const lampOnFactor = Math.max(nightFactor, fogMode ? 0.55 : rainIntensity * 0.5);
+      shaftMat.emissiveIntensity = nightFactor * 1.45;
       if (lampMat) {
-        lampMat.emissiveIntensity = 0.12 + nightFactor * 2.25;
+        lampMat.emissiveIntensity = 0.12 + lampOnFactor * 2.65;
       }
+      const beaconPulse = 0.45 + 0.55 * Math.sin(timeSec * 3.1);
+      bridgeBeaconMat.emissiveIntensity = 0.25 + lampOnFactor * 2.8 * beaconPulse;
 
       if (checkpointBeacon.visible) {
         checkpointBeacon.rotation.y = timeSec * 1.6;

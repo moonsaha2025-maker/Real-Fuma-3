@@ -26,6 +26,8 @@ export class RacingAudioEngine {
 
   private sirenOsc: OscillatorNode | null = null;
   private sirenGain: GainNode | null = null;
+  private rainFilter: BiquadFilterNode | null = null;
+  private rainGain: GainNode | null = null;
 
   private initialized = false;
   private muted = false;
@@ -157,6 +159,17 @@ export class RacingAudioEngine {
       this.sirenGain.connect(this.sfxGain);
       this.sirenOsc.start();
 
+      // Continuous Rain Patter Ambiance (attenuated and low-passed inside cockpit)
+      this.rainFilter = ctx.createBiquadFilter();
+      this.rainFilter.type = 'lowpass';
+      this.rainFilter.frequency.value = 2100;
+      this.rainFilter.Q.value = 0.7;
+      this.rainGain = ctx.createGain();
+      this.rainGain.gain.value = 0;
+      this.noiseSource.connect(this.rainFilter);
+      this.rainFilter.connect(this.rainGain);
+      this.rainGain.connect(this.sfxGain);
+
       this.initialized = true;
       radioEngine.attach(ctx, this.radioGain, this.noiseBuffer);
       radioEngine.setStation(this.radioStation, false);
@@ -220,11 +233,17 @@ export class RacingAudioEngine {
     policeActive: boolean;
     policeDistanceM: number;
     elapsedTime: number;
+    rainLevel?: number; // 0..1
+    inCockpit?: boolean;
   }): void {
     if (!this.initialized || !this.ctx) return;
     if (this.ctx.state === 'suspended') return;
 
     const now = this.ctx.currentTime;
+    const rainTarget = (params.rainLevel ?? 0) * (params.inCockpit ? 0.065 : 0.13);
+    this.rainGain?.gain.setTargetAtTime(rainTarget, now, 0.15);
+    this.rainFilter?.frequency.setTargetAtTime(params.inCockpit ? 880 : 2250, now, 0.15);
+
     if (!params.active) {
       this.engineGain?.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain?.gain.setTargetAtTime(0, now, 0.08);
@@ -403,6 +422,36 @@ export class RacingAudioEngine {
     gain.connect(this.sfxGain);
     osc.start(now);
     osc.stop(now + (isGo ? 0.38 : 0.2));
+  }
+
+  public playThunder(intensity = 0.85): void {
+    if (!this.initialized || !this.ctx || !this.sfxGain || !this.noiseBuffer) return;
+    const now = this.ctx.currentTime;
+    const level = Math.min(1, Math.max(0.25, intensity));
+
+    const rumbleSrc = this.ctx.createBufferSource();
+    rumbleSrc.buffer = this.noiseBuffer;
+    rumbleSrc.loop = true;
+
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(520 * level, now + 0.05);
+    lp.frequency.exponentialRampToValueAtTime(115, now + 0.55);
+    lp.frequency.exponentialRampToValueAtTime(68, now + 2.4);
+    lp.Q.value = 1.1;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.42 * level, now + 0.14);
+    gain.gain.linearRampToValueAtTime(0.22 * level, now + 0.48);
+    gain.gain.linearRampToValueAtTime(0.30 * level, now + 0.85);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 2.55);
+
+    rumbleSrc.connect(lp);
+    lp.connect(gain);
+    gain.connect(this.sfxGain);
+    rumbleSrc.start(now);
+    rumbleSrc.stop(now + 2.65);
   }
 
   public playUiClick(): void {
