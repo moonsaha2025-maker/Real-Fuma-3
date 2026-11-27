@@ -1194,9 +1194,9 @@ export class GameEngine {
         .set(0, 1, 0)
         .transformDirection(this.playerCarRig.root.matrixWorld)
         .normalize();
-      this.camera.near = this.cameraMode === 'cockpit' ? 0.14 : 0.18;
+      this.camera.near = this.cameraMode === 'cockpit' ? 0.075 : 0.12;
       this.camera.fov =
-        this.cameraMode === 'cockpit' ? 68 : this.cameraMode === 'hood' ? 62 : 66;
+        this.cameraMode === 'cockpit' ? 58 : this.cameraMode === 'hood' ? 60 : 64;
       this.camera.position.copy(_cockpitEyeWorld);
       this.camera.up.copy(_cockpitUpWorld);
       this.camera.lookAt(_cockpitLookWorld);
@@ -2851,12 +2851,12 @@ export class GameEngine {
         this.camera.rotateZ(THREE.MathUtils.clamp(this.cameraCrashRoll * 0.45, -0.08, 0.08));
       }
 
-      const baseFov = isCockpit ? 68 : this.cameraMode === 'hood' ? 62 : 66;
+      const baseFov = isCockpit ? 58 : this.cameraMode === 'hood' ? 60 : 64;
       const targetFpFov =
         baseFov +
-        Math.min(5.5, this.physics.speedKmh * 0.016) +
-        (this.physics.nitroActive ? 4.5 : 0);
-      this.camera.near = isCockpit ? 0.14 : 0.18;
+        Math.min(4.8, this.physics.speedKmh * 0.014) +
+        (this.physics.nitroActive ? 3.8 : 0);
+      this.camera.near = isCockpit ? 0.075 : 0.12;
       this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFpFov, 7.5, dt);
       this.camera.updateProjectionMatrix();
 

@@ -418,48 +418,95 @@ function buildSculptedHullGeometry(
   return geo;
 }
 
-/**
- * Wrap-around sculpted glass canopy (curved windshield + teardrop side glass + fastback rear glass).
- */
-function buildCanopyGeometry(
+interface CabinStation {
+  z: number;
+  w: number;
+  yBase: number;
+  yTop: number;
+  roofW: number;
+  roofY: number;
+}
+
+interface CabinStations {
+  tail: CabinStation;
+  cPillar: CabinStation;
+  bPillar: CabinStation;
+  midRoof: CabinStation;
+  header: CabinStation;
+  cowl: CabinStation;
+  isCabForward: boolean;
+  isPorsche: boolean;
+  isDoubleBubble: boolean;
+}
+
+function getCabinStations(
   spec: CarBaseSpec,
   arch: CarArchetype,
   widthScale: number,
-): THREE.BufferGeometry {
+): CabinStations {
   const L = spec.dimensions.length;
   const halfW = spec.dimensions.width * 0.5 * widthScale;
   const H = spec.dimensions.height;
   const clearance = spec.dimensions.groundClearance;
 
-  const isPorsche = arch === 'porsche';
   const isCabForward = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
+  const isPorsche = arch === 'porsche';
+  const isDoubleBubble = arch === 'supra';
 
-  const stations = isCabForward
-    ? [
-        { z: -0.34 * L, w: 0.42 * halfW, yBase: clearance + H * 0.65, yTop: clearance + H * 0.67 },
-        { z: -0.24 * L, w: 0.56 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.87 },
-        { z: -0.11 * L, w: 0.66 * halfW, yBase: clearance + H * 0.63, yTop: clearance + H * 0.99 },
-        { z: 0.03 * L, w: 0.69 * halfW, yBase: clearance + H * 0.61, yTop: clearance + H * 1.00 },
-        { z: 0.14 * L, w: 0.67 * halfW, yBase: clearance + H * 0.59, yTop: clearance + H * 0.94 },
-        { z: 0.26 * L, w: 0.57 * halfW, yBase: clearance + H * 0.54, yTop: clearance + H * 0.60 },
-      ]
-    : isPorsche
-      ? [
-          { z: -0.40 * L, w: 0.50 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 0.66 },
-          { z: -0.28 * L, w: 0.64 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.85 },
-          { z: -0.12 * L, w: 0.70 * halfW, yBase: clearance + H * 0.65, yTop: clearance + H * 0.99 },
-          { z: 0.02 * L, w: 0.71 * halfW, yBase: clearance + H * 0.63, yTop: clearance + H * 1.00 },
-          { z: 0.12 * L, w: 0.68 * halfW, yBase: clearance + H * 0.60, yTop: clearance + H * 0.88 },
-          { z: 0.23 * L, w: 0.60 * halfW, yBase: clearance + H * 0.55, yTop: clearance + H * 0.59 },
-        ]
-      : [
-          { z: -0.37 * L, w: 0.52 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 0.67 },
-          { z: -0.24 * L, w: 0.66 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.95 },
-          { z: -0.06 * L, w: 0.71 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 1.00 },
-          { z: 0.07 * L, w: 0.70 * halfW, yBase: clearance + H * 0.62, yTop: clearance + H * 0.97 },
-          { z: 0.16 * L, w: 0.66 * halfW, yBase: clearance + H * 0.59, yTop: clearance + H * 0.80 },
-          { z: 0.25 * L, w: 0.59 * halfW, yBase: clearance + H * 0.55, yTop: clearance + H * 0.59 },
-        ];
+  if (isCabForward) {
+    return {
+      isCabForward,
+      isPorsche,
+      isDoubleBubble,
+      tail: { z: -0.34 * L, w: 0.42 * halfW, yBase: clearance + H * 0.65, yTop: clearance + H * 0.67, roofW: 0.34 * halfW, roofY: clearance + H * 0.67 },
+      cPillar: { z: -0.23 * L, w: 0.56 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.87, roofW: 0.44 * halfW, roofY: clearance + H * 0.875 },
+      bPillar: { z: -0.11 * L, w: 0.66 * halfW, yBase: clearance + H * 0.63, yTop: clearance + H * 0.99, roofW: 0.50 * halfW, roofY: clearance + H * 0.995 },
+      midRoof: { z: 0.03 * L, w: 0.69 * halfW, yBase: clearance + H * 0.61, yTop: clearance + H * 1.00, roofW: 0.52 * halfW, roofY: clearance + H * 1.005 },
+      header: { z: 0.135 * L, w: 0.67 * halfW, yBase: clearance + H * 0.59, yTop: clearance + H * 0.94, roofW: 0.50 * halfW, roofY: clearance + H * 0.945 },
+      cowl: { z: 0.255 * L, w: 0.57 * halfW, yBase: clearance + H * 0.54, yTop: clearance + H * 0.60, roofW: 0.46 * halfW, roofY: clearance + H * 0.595 },
+    };
+  }
+
+  if (isPorsche) {
+    return {
+      isCabForward,
+      isPorsche,
+      isDoubleBubble,
+      tail: { z: -0.40 * L, w: 0.50 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 0.66, roofW: 0.38 * halfW, roofY: clearance + H * 0.66 },
+      cPillar: { z: -0.28 * L, w: 0.64 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.85, roofW: 0.48 * halfW, roofY: clearance + H * 0.85 },
+      bPillar: { z: -0.14 * L, w: 0.70 * halfW, yBase: clearance + H * 0.65, yTop: clearance + H * 0.985, roofW: 0.53 * halfW, roofY: clearance + H * 0.99 },
+      midRoof: { z: -0.02 * L, w: 0.71 * halfW, yBase: clearance + H * 0.63, yTop: clearance + H * 1.00, roofW: 0.54 * halfW, roofY: clearance + H * 1.005 },
+      header: { z: 0.08 * L, w: 0.68 * halfW, yBase: clearance + H * 0.60, yTop: clearance + H * 0.945, roofW: 0.53 * halfW, roofY: clearance + H * 0.955 },
+      cowl: { z: 0.225 * L, w: 0.60 * halfW, yBase: clearance + H * 0.55, yTop: clearance + H * 0.59, roofW: 0.48 * halfW, roofY: clearance + H * 0.585 },
+    };
+  }
+
+  // JDM / Front-engine GT (GT-R / Supra)
+  return {
+    isCabForward,
+    isPorsche,
+    isDoubleBubble,
+    tail: { z: -0.37 * L, w: 0.52 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 0.67, roofW: 0.40 * halfW, roofY: clearance + H * 0.67 },
+    cPillar: { z: -0.24 * L, w: 0.66 * halfW, yBase: clearance + H * 0.66, yTop: clearance + H * 0.95, roofW: 0.51 * halfW, roofY: clearance + H * 0.95 },
+    bPillar: { z: -0.08 * L, w: 0.71 * halfW, yBase: clearance + H * 0.64, yTop: clearance + H * 1.00, roofW: 0.55 * halfW, roofY: clearance + H * 1.008 },
+    midRoof: { z: 0.04 * L, w: 0.70 * halfW, yBase: clearance + H * 0.62, yTop: clearance + H * 0.98, roofW: 0.54 * halfW, roofY: clearance + H * 0.985 },
+    header: { z: 0.125 * L, w: 0.67 * halfW, yBase: clearance + H * 0.60, yTop: clearance + H * 0.915, roofW: 0.51 * halfW, roofY: clearance + H * 0.92 },
+    cowl: { z: 0.245 * L, w: 0.59 * halfW, yBase: clearance + H * 0.55, yTop: clearance + H * 0.59, roofW: 0.48 * halfW, roofY: clearance + H * 0.585 },
+  };
+}
+
+/**
+ * Wrap-around sculpted glass canopy (curved windshield + teardrop side glass + fastback rear glass).
+ */
+function buildCanopyGeometry(cabin: CabinStations): THREE.BufferGeometry {
+  const stations = [
+    cabin.tail,
+    cabin.cPillar,
+    cabin.bPillar,
+    cabin.midRoof,
+    cabin.header,
+    cabin.cowl,
+  ];
 
   const ringPts = 9;
   const verts: number[] = [];
@@ -504,61 +551,87 @@ function buildCanopyGeometry(
 }
 
 /**
+ * Ultra-clear curved front windshield for 1st-person cockpit view (leaves side windows open & road crisp).
+ */
+function buildCockpitWindshieldGeometry(cabin: CabinStations): THREE.BufferGeometry {
+  const { header, cowl } = cabin;
+  const rows = 4;
+  const cols = 7;
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let r = 0; r <= rows; r++) {
+    const t = r / rows; // 0 = header, 1 = cowl
+    const z = THREE.MathUtils.lerp(header.z, cowl.z, t);
+    const halfSpan = THREE.MathUtils.lerp(header.roofW * 0.98, cowl.roofW * 1.02, t);
+    const edgeY = THREE.MathUtils.lerp(header.roofY - 0.015, cowl.roofY - 0.005, t);
+    const centerY = THREE.MathUtils.lerp(header.roofY + 0.022, cowl.roofY + 0.018, t);
+
+    for (let c = 0; c <= cols; c++) {
+      const u = (c / cols) * 2 - 1; // -1..1
+      const x = u * halfSpan;
+      const arch = 1 - u * u;
+      const y = THREE.MathUtils.lerp(edgeY, centerY, arch);
+      // Slight subtle forward bow across center of windshield
+      const zBow = arch * 0.032 * Math.sin(t * Math.PI);
+      verts.push(x, y, z + zBow);
+      uvs.push(c / cols, t);
+    }
+  }
+
+  const rowStride = cols + 1;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const a = r * rowStride + c;
+      const b = a + 1;
+      const d = (r + 1) * rowStride + c;
+      const e = d + 1;
+      indices.push(a, b, d);
+      indices.push(b, e, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
  * Painted/Carbon contoured roof skin (double-bubble on Supra, smooth fastback on 911,
- * teardrop visor-capped on McLaren/Jesko/Ferrari).
+ * teardrop visor-capped on McLaren/Jesko/Ferrari) plus optional recessed interior Alcantara headliner.
  */
 function buildContouredRoofGeometry(
-  spec: CarBaseSpec,
-  arch: CarArchetype,
-  widthScale: number,
+  cabin: CabinStations,
+  interiorOffset = 0,
 ): THREE.BufferGeometry {
-  const L = spec.dimensions.length;
-  const halfW = spec.dimensions.width * 0.5 * widthScale;
-  const H = spec.dimensions.height;
-  const clearance = spec.dimensions.groundClearance;
-
-  const isCabForward = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
-  const isPorsche = arch === 'porsche';
-  const isDoubleBubble = arch === 'supra';
-
-  const stations = isCabForward
-    ? [
-        { z: -0.23 * L, w: 0.44 * halfW, y: clearance + H * 0.875 },
-        { z: -0.11 * L, w: 0.50 * halfW, y: clearance + H * 0.995 },
-        { z: 0.03 * L, w: 0.52 * halfW, y: clearance + H * 1.005 },
-        { z: 0.13 * L, w: 0.50 * halfW, y: clearance + H * 0.945 },
-      ]
-    : isPorsche
-      ? [
-          { z: -0.34 * L, w: 0.44 * halfW, y: clearance + H * 0.74 },
-          { z: -0.20 * L, w: 0.52 * halfW, y: clearance + H * 0.94 },
-          { z: -0.05 * L, w: 0.54 * halfW, y: clearance + H * 1.005 },
-          { z: 0.06 * L, w: 0.53 * halfW, y: clearance + H * 0.975 },
-        ]
-      : [
-          { z: -0.24 * L, w: 0.51 * halfW, y: clearance + H * 0.95 },
-          { z: -0.09 * L, w: 0.55 * halfW, y: clearance + H * 1.008 },
-          { z: 0.05 * L, w: 0.54 * halfW, y: clearance + H * 0.985 },
-          { z: 0.11 * L, w: 0.51 * halfW, y: clearance + H * 0.915 },
-        ];
+  const stations = cabin.isPorsche
+    ? [cabin.tail, cabin.cPillar, cabin.bPillar, cabin.midRoof, cabin.header]
+    : [cabin.cPillar, cabin.bPillar, cabin.midRoof, cabin.header];
 
   const ringPts = 7;
   const verts: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
+  const widthMult = interiorOffset > 0 ? 0.96 : 1.0;
 
   for (let sIdx = 0; sIdx < stations.length; sIdx++) {
     const st = stations[sIdx];
-    const bubbleBump = isDoubleBubble ? 0.018 : 0.0;
-    const centerDip = isDoubleBubble ? 0.008 : 0.025;
+    const w = st.roofW * widthMult;
+    const y = st.roofY - interiorOffset;
+    const bubbleBump = cabin.isDoubleBubble ? 0.018 : 0.0;
+    const centerDip = cabin.isDoubleBubble ? 0.008 : 0.025;
     const pts: Array<[number, number]> = [
-      [-st.w, st.y - 0.015],
-      [-st.w * 0.68, st.y + 0.012],
-      [-st.w * 0.34, st.y + 0.020 + bubbleBump],
-      [0, st.y + centerDip],
-      [st.w * 0.34, st.y + 0.020 + bubbleBump],
-      [st.w * 0.68, st.y + 0.012],
-      [st.w, st.y - 0.015],
+      [-w, y - 0.015],
+      [-w * 0.68, y + 0.012],
+      [-w * 0.34, y + 0.020 + bubbleBump],
+      [0, y + centerDip],
+      [w * 0.34, y + 0.020 + bubbleBump],
+      [w * 0.68, y + 0.012],
+      [w, y - 0.015],
     ];
     for (let p = 0; p < pts.length; p++) {
       verts.push(pts[p][0], pts[p][1], st.z);
@@ -1020,9 +1093,10 @@ export function createCarModel(
   hullMesh.receiveShadow = true;
   chassisGroup.add(hullMesh);
 
-  // 2. Curved Wrap-Around Glass Canopy + Contoured Painted/Carbon Roof + Cockpit Interior
+  // 2. Curved Wrap-Around Glass Canopy + Contoured Painted/Carbon Roof + Cockpit Interior & Frame
+  const cabin = getCabinStations(spec, arch, widthScale);
   const canopyMesh = new THREE.Mesh(
-    buildCanopyGeometry(spec, arch, widthScale),
+    buildCanopyGeometry(cabin),
     glassMat,
   );
   canopyMesh.castShadow = !lightweight;
@@ -1030,11 +1104,50 @@ export function createCarModel(
 
   const isCarbonRoof = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
   const roofMesh = new THREE.Mesh(
-    buildContouredRoofGeometry(spec, arch, widthScale),
+    buildContouredRoofGeometry(cabin, 0),
     isCarbonRoof ? carbonMat : bodyMaterial,
   );
   roofMesh.castShadow = !lightweight;
   chassisGroup.add(roofMesh);
+
+  // Ultra-clear 1st-person cockpit windshield & dark Alcantara interior headliner
+  let cockpitGlassMesh: THREE.Mesh | null = null;
+  let roofLinerMesh: THREE.Mesh | null = null;
+  if (!lightweight) {
+    const cockpitGlassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xdbeafe,
+      roughness: 0.04,
+      metalness: 0.05,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.02,
+      reflectivity: 0.9,
+      envMapIntensity: 0.75,
+      transparent: true,
+      opacity: 0.075,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    cockpitGlassMesh = new THREE.Mesh(
+      buildCockpitWindshieldGeometry(cabin),
+      cockpitGlassMat,
+    );
+    cockpitGlassMesh.visible = false;
+    cockpitGlassMesh.renderOrder = 3;
+    chassisGroup.add(cockpitGlassMesh);
+
+    const headlinerMat = new THREE.MeshStandardMaterial({
+      color: 0x0b0e14,
+      roughness: 0.94,
+      metalness: 0.04,
+      side: THREE.BackSide,
+    });
+    roofLinerMesh = new THREE.Mesh(
+      buildContouredRoofGeometry(cabin, 0.018),
+      headlinerMat,
+    );
+    roofLinerMesh.visible = false;
+    chassisGroup.add(roofLinerMesh);
+  }
 
   // Batched geometry pools per material so draw calls stay tiny!
   const darkTrimParts: THREE.BufferGeometry[] = [];
@@ -1042,15 +1155,14 @@ export function createCarModel(
   const bodyTrimParts: THREE.BufferGeometry[] = [];
   const chromeParts: THREE.BufferGeometry[] = [];
 
-  // Cockpit geometry & dynamic interior gauges + animated steering wheel + first-person anchors
-  const isCabForward = arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko';
-  const driverX = W * 0.172; // Left-hand drive (+X is driver left when facing +Z)
-  const eyeY = clearance + H * 0.855;
-  const eyeZ = isCabForward ? L * 0.012 : -L * 0.008;
+  // Ergonomic driver pocket anchored to each archetype's actual windshield header & cowl
+  const driverX = W * 0.165; // Left-hand drive (+X is driver left when facing +Z)
+  const eyeZ = cabin.header.z - 0.54;
+  const eyeY = clearance + H * 0.768;
   const cockpitEyeLocal = new THREE.Vector3(driverX, eyeY, eyeZ);
-  const cockpitLookLocal = new THREE.Vector3(driverX, eyeY - 0.11, eyeZ + 20.0);
-  const hoodEyeLocal = new THREE.Vector3(0, clearance + H * 0.68, L * 0.20);
-  const hoodLookLocal = new THREE.Vector3(0, clearance + H * 0.50, L * 0.20 + 24.0);
+  const cockpitLookLocal = new THREE.Vector3(driverX, eyeY - 0.045, eyeZ + 20.0);
+  const hoodEyeLocal = new THREE.Vector3(0, Math.max(cabin.cowl.roofY + 0.11, clearance + H * 0.65), cabin.cowl.z + L * 0.035);
+  const hoodLookLocal = new THREE.Vector3(0, clearance + H * 0.44, cabin.cowl.z + 24.0);
   const bumperEyeLocal = new THREE.Vector3(0, clearance + H * 0.44, L * 0.53);
   const bumperLookLocal = new THREE.Vector3(0, clearance + H * 0.40, L * 0.53 + 28.0);
 
@@ -1074,11 +1186,13 @@ export function createCarModel(
   }) => void) | null = null;
 
   if (!lightweight) {
-    // Bucket seats with bolsters & headrests (placed safely behind driver eyeZ)
+    // Bucket seats with bolsters & headrests anchored cleanly behind driver eyeZ
+    const seatBackZ = eyeZ - 0.27;
+    const headrestZ = eyeZ - 0.32;
     for (const side of [-1, 1]) {
-      const sx = side * W * 0.172;
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.32, 0.34, 0.12), sx, clearance + H * 0.58, -L * 0.095, -0.22);
-      addPart(darkTrimParts, new THREE.BoxGeometry(0.17, 0.13, 0.08), sx, clearance + H * 0.78, -L * 0.13, -0.14);
+      const sx = side * driverX;
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.32, 0.34, 0.11), sx, clearance + H * 0.58, seatBackZ, -0.22);
+      addPart(darkTrimParts, new THREE.BoxGeometry(0.17, 0.13, 0.08), sx, clearance + H * 0.77, headrestZ, -0.14);
     }
 
     // Interior cockpit assembly attached to chassisGroup so pitch/roll/heave animate naturally
@@ -1087,9 +1201,14 @@ export function createCarModel(
     chassisGroup.add(cockpitGroup);
 
     const alcantaraMat = new THREE.MeshStandardMaterial({
-      color: 0x11141a,
-      roughness: 0.86,
-      metalness: 0.08,
+      color: 0x10131a,
+      roughness: 0.88,
+      metalness: 0.06,
+    });
+    const fritMat = new THREE.MeshStandardMaterial({
+      color: 0x05070b,
+      roughness: 0.78,
+      metalness: 0.1,
     });
     const alloyTrimMat = new THREE.MeshStandardMaterial({
       color: 0xcbd5e1,
@@ -1104,68 +1223,245 @@ export function createCarModel(
       metalness: 0.2,
     });
 
-    const dashZ = eyeZ + 0.42;
-    const dashDeckY = clearance + H * 0.678;
-    const gaugeY = clearance + H * 0.735;
-    const swZ = eyeZ + 0.32;
-    const swY = clearance + H * 0.702;
+    // 1. Structural Cabin Frame: Exact Curve-Matched A-Pillars, Roof Side Rails, B-Pillars & Upper Header
+    const { header, cowl, midRoof, bPillar } = cabin;
+    const frameParts: THREE.BufferGeometry[] = [];
+    const headerCenterY = header.roofY + 0.012;
 
-    // 1. Sculpted dashboard main shelf (narrowed cleanly inside tapered canopy) & gauge cowl
-    const dashDeck = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.48, 0.068, 0.19),
+    for (const side of [-1, 1]) {
+      // Exact curved A-pillar connecting outer cowl base to front roof header corner
+      const pCowl = new THREE.Vector3(side * cowl.roofW * 1.01, cowl.roofY - 0.012, cowl.z);
+      const pMid = new THREE.Vector3(
+        side * THREE.MathUtils.lerp(cowl.roofW, header.roofW, 0.52) * 1.02,
+        THREE.MathUtils.lerp(cowl.roofY, header.roofY, 0.54) + 0.010,
+        THREE.MathUtils.lerp(cowl.z, header.z, 0.50),
+      );
+      const pHdr = new THREE.Vector3(side * header.roofW * 0.99, header.roofY - 0.016, header.z);
+      const aCurve = new THREE.CatmullRomCurve3([pCowl, pMid, pHdr]);
+      frameParts.push(new THREE.TubeGeometry(aCurve, 12, 0.025, 8, false));
+
+      // Black ceramic frit border strip tucked directly along inner glass edge of A-pillar
+      const fritCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(side * cowl.roofW * 0.95, cowl.roofY - 0.008, cowl.z + 0.004),
+        new THREE.Vector3(side * THREE.MathUtils.lerp(cowl.roofW, header.roofW, 0.52) * 0.96, THREE.MathUtils.lerp(cowl.roofY, header.roofY, 0.54) + 0.012, THREE.MathUtils.lerp(cowl.z, header.z, 0.50) + 0.004),
+        new THREE.Vector3(side * header.roofW * 0.93, header.roofY - 0.012, header.z + 0.004),
+      ]);
+      addPart(darkTrimParts, new THREE.TubeGeometry(fritCurve, 10, 0.011, 6, false));
+
+      // Roof side rail extending back past driver head to B-pillar
+      const pMidRoof = new THREE.Vector3(side * midRoof.roofW * 0.98, midRoof.roofY - 0.018, midRoof.z);
+      const pBPillarTop = new THREE.Vector3(side * bPillar.roofW * 0.98, bPillar.roofY - 0.018, bPillar.z);
+      const railCurve = new THREE.CatmullRomCurve3([pHdr, pMidRoof, pBPillarTop]);
+      frameParts.push(new THREE.TubeGeometry(railCurve, 10, 0.024, 8, false));
+
+      // B-pillar descending smoothly to rear door beltline
+      const pBPillarBase = new THREE.Vector3(side * bPillar.w * 0.94, bPillar.yBase - 0.01, bPillar.z);
+      const bCurve = new THREE.CatmullRomCurve3([
+        pBPillarTop,
+        new THREE.Vector3(
+          side * THREE.MathUtils.lerp(bPillar.roofW, bPillar.w, 0.55) * 0.96,
+          THREE.MathUtils.lerp(bPillar.roofY, bPillar.yBase, 0.50),
+          bPillar.z,
+        ),
+        pBPillarBase,
+      ]);
+      frameParts.push(new THREE.TubeGeometry(bCurve, 8, 0.026, 8, false));
+
+      // Continuous door beltline sill & interior door trim card enclosing left/right flanks
+      const pBeltCowl = new THREE.Vector3(side * cowl.w * 0.92, cowl.yBase + 0.012, cowl.z - 0.02);
+      const pBeltMid = new THREE.Vector3(side * midRoof.w * 0.90, midRoof.yBase + 0.016, midRoof.z);
+      const pBeltRear = new THREE.Vector3(side * bPillar.w * 0.91, bPillar.yBase + 0.014, bPillar.z);
+      const sillCurve = new THREE.CatmullRomCurve3([pBeltCowl, pBeltMid, pBeltRear]);
+      frameParts.push(new THREE.TubeGeometry(sillCurve, 10, 0.032, 8, false));
+
+      // Carbon interior door upper trim card & armrest sill
+      const doorLen = cowl.z - bPillar.z - 0.04;
+      const doorMidZ = (cowl.z + bPillar.z) * 0.5;
+      const doorMidX = side * ((cowl.w + midRoof.w) * 0.5 * 0.89);
+      const doorTopY = (cowl.yBase + midRoof.yBase) * 0.5 - 0.025;
+      const doorPanel = new THREE.Mesh(
+        new THREE.BoxGeometry(0.055, 0.14, Math.max(0.45, doorLen)),
+        carbonMat,
+      );
+      doorPanel.position.set(doorMidX, doorTopY, doorMidZ);
+      cockpitGroup.add(doorPanel);
+
+      const doorStitchedRail = new THREE.Mesh(
+        new THREE.BoxGeometry(0.062, 0.016, Math.max(0.45, doorLen) * 0.88),
+        bodyMaterial,
+      );
+      doorStitchedRail.position.set(doorMidX - side * 0.012, doorTopY + 0.052, doorMidZ);
+      cockpitGroup.add(doorStitchedRail);
+
+      // Folded Alcantara sun visor tucked cleanly under header
+      const visor = new THREE.Mesh(
+        new THREE.BoxGeometry(header.roofW * 0.68, 0.018, 0.095),
+        alcantaraMat,
+      );
+      visor.position.set(side * header.roofW * 0.48, header.roofY - 0.026, header.z - 0.042);
+      visor.rotation.x = 0.24;
+      cockpitGroup.add(visor);
+    }
+
+    // Curved Upper Windshield Header Beam connecting left & right A-pillars cleanly
+    const hdrCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-header.roofW * 0.99, header.roofY - 0.016, header.z),
+      new THREE.Vector3(-header.roofW * 0.50, headerCenterY - 0.012, header.z + 0.012),
+      new THREE.Vector3(0, headerCenterY - 0.008, header.z + 0.018),
+      new THREE.Vector3(header.roofW * 0.50, headerCenterY - 0.012, header.z + 0.012),
+      new THREE.Vector3(header.roofW * 0.99, header.roofY - 0.016, header.z),
+    ]);
+    frameParts.push(new THREE.TubeGeometry(hdrCurve, 14, 0.026, 8, false));
+
+    // Curved top windshield frit eyebrow strip & bottom cowl seal
+    const topFritCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-header.roofW * 0.96, header.roofY - 0.026, header.z + 0.016),
+      new THREE.Vector3(0, headerCenterY - 0.022, header.z + 0.032),
+      new THREE.Vector3(header.roofW * 0.96, header.roofY - 0.026, header.z + 0.016),
+    ]);
+    const topFritMesh = new THREE.Mesh(
+      new THREE.TubeGeometry(topFritCurve, 14, 0.016, 6, false),
+      fritMat,
+    );
+    cockpitGroup.add(topFritMesh);
+
+    const cowlBeamCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-cowl.roofW * 1.01, cowl.roofY - 0.015, cowl.z),
+      new THREE.Vector3(0, cowl.roofY + 0.008, cowl.z + 0.022),
+      new THREE.Vector3(cowl.roofW * 1.01, cowl.roofY - 0.015, cowl.z),
+    ]);
+    frameParts.push(new THREE.TubeGeometry(cowlBeamCurve, 14, 0.026, 8, false));
+
+    const mergedFrameGeo = safeMerge(frameParts);
+    if (mergedFrameGeo) {
+      cockpitGroup.add(new THREE.Mesh(mergedFrameGeo, alcantaraMat));
+    }
+
+    // Twin aerodynamic wiper blades parked cleanly along lower windshield cowl
+    for (const wx of [-cowl.roofW * 0.42, cowl.roofW * 0.14]) {
+      const wiper = new THREE.Mesh(
+        new THREE.BoxGeometry(cowl.roofW * 0.68, 0.010, 0.016),
+        fritMat,
+      );
+      wiper.position.set(wx + 0.12, cowl.roofY + 0.014, cowl.z + 0.005);
+      wiper.rotation.z = -0.05;
+      wiper.rotation.y = 0.08;
+      cockpitGroup.add(wiper);
+    }
+
+    // Interior Rearview Mirror mounted via real stalk directly into the Windshield Header Beam
+    const mirrorBaseY = headerCenterY - 0.014;
+    const mirrorBaseZ = header.z - 0.012;
+    const mirrorHeadY = headerCenterY - 0.068;
+    const mirrorHeadZ = header.z - 0.072;
+    const mirrorStalkCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, mirrorBaseY, mirrorBaseZ),
+      new THREE.Vector3(0, (mirrorBaseY + mirrorHeadY) * 0.5 + 0.006, (mirrorBaseZ + mirrorHeadZ) * 0.5),
+      new THREE.Vector3(0, mirrorHeadY, mirrorHeadZ + 0.012),
+    ]);
+    const mirrorStalk = new THREE.Mesh(
+      new THREE.TubeGeometry(mirrorStalkCurve, 6, 0.008, 6, false),
+      fritMat,
+    );
+    cockpitGroup.add(mirrorStalk);
+
+    const mirrorHousing = new THREE.Mesh(
+      new THREE.BoxGeometry(0.155, 0.036, 0.022),
       alcantaraMat,
     );
-    dashDeck.position.set(0, dashDeckY, dashZ + 0.03);
-    dashDeck.rotation.x = 0.06;
+    mirrorHousing.position.set(0, mirrorHeadY, mirrorHeadZ);
+    mirrorHousing.rotation.x = -0.10;
+    cockpitGroup.add(mirrorHousing);
+
+    const mirrorGlass = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.142, 0.028),
+      new THREE.MeshStandardMaterial({
+        color: 0x334155,
+        metalness: 0.92,
+        roughness: 0.08,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      }),
+    );
+    mirrorGlass.position.set(0, 0, -0.013);
+    mirrorGlass.rotation.y = Math.PI;
+    mirrorHousing.add(mirrorGlass);
+
+    // 2. Full-Width Sculpted Dashboard Deck (spans cleanly between left & right A-pillars!)
+    const dashWidth = cowl.roofW * 1.94;
+    const dashZ = eyeZ + 0.45;
+    const dashDeckY = Math.max(clearance + H * 0.625, eyeY - 0.195);
+    const gaugeY = Math.max(dashDeckY + 0.055, eyeY - 0.135);
+    const swZ = eyeZ + 0.31;
+    const swY = Math.max(dashDeckY + 0.018, eyeY - 0.175);
+    const dashDepth = Math.max(0.24, cowl.z - dashZ + 0.12);
+
+    const dashDeck = new THREE.Mesh(
+      new THREE.BoxGeometry(dashWidth, 0.068, dashDepth),
+      alcantaraMat,
+    );
+    dashDeck.position.set(0, dashDeckY, dashZ + dashDepth * 0.42);
+    dashDeck.rotation.x = 0.07;
     cockpitGroup.add(dashDeck);
 
-    // Carbon fascia strip across dashboard front
+    // Full-width carbon fascia trim + outer circular air vents tucked beside both A-pillars
     const dashFascia = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.46, 0.040, 0.032),
+      new THREE.BoxGeometry(dashWidth * 0.96, 0.044, 0.034),
       carbonMat,
     );
-    dashFascia.position.set(0, dashDeckY - 0.008, dashZ - 0.065);
+    dashFascia.position.set(0, dashDeckY - 0.012, dashZ - 0.038);
     cockpitGroup.add(dashFascia);
+
+    for (const side of [-1, 1]) {
+      const ventRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.024, 0.0045, 8, 16),
+        alloyTrimMat,
+      );
+      ventRing.position.set(side * (dashWidth * 0.43), dashDeckY - 0.010, dashZ - 0.056);
+      cockpitGroup.add(ventRing);
+    }
 
     // Subtle colored accent pin-stripe matching car body color across passenger dash
     const accentPin = new THREE.Mesh(
-      new THREE.BoxGeometry(W * 0.18, 0.008, 0.012),
+      new THREE.BoxGeometry(dashWidth * 0.36, 0.008, 0.012),
       bodyMaterial,
     );
-    accentPin.position.set(-W * 0.105, dashDeckY + 0.005, dashZ - 0.084);
+    accentPin.position.set(-dashWidth * 0.21, dashDeckY + 0.004, dashZ - 0.058);
     cockpitGroup.add(accentPin);
 
-    // Hooded instrument binnacle brow directly ahead of driver
+    // Hooded instrument binnacle brow directly ahead of driver (cleanly framed inside steering wheel!)
     const binnacleBack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.275, 0.122, 0.070),
+      new THREE.BoxGeometry(0.268, 0.114, 0.066),
       alcantaraMat,
     );
-    binnacleBack.position.set(driverX, gaugeY, dashZ - 0.012);
-    binnacleBack.rotation.x = 0.20;
+    binnacleBack.position.set(driverX, gaugeY, dashZ - 0.014);
+    binnacleBack.rotation.x = 0.18;
     cockpitGroup.add(binnacleBack);
 
     const binnacleVisor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.290, 0.020, 0.105),
+      new THREE.BoxGeometry(0.282, 0.018, 0.102),
       carbonMat,
     );
-    binnacleVisor.position.set(driverX, gaugeY + 0.068, dashZ - 0.032);
-    binnacleVisor.rotation.x = 0.14;
+    binnacleVisor.position.set(driverX, gaugeY + 0.062, dashZ - 0.032);
+    binnacleVisor.rotation.x = 0.12;
     cockpitGroup.add(binnacleVisor);
 
     // Center console bridge (strictly above hull spine to avoid Z-fighting) + infotainment pod
+    const consoleY = Math.max(clearance + H * 0.648, dashDeckY - 0.032);
     const consoleBridge = new THREE.Mesh(
-      new THREE.BoxGeometry(0.17, 0.046, 0.48),
+      new THREE.BoxGeometry(0.175, 0.044, 0.48),
       carbonMat,
     );
-    consoleBridge.position.set(0, clearance + H * 0.660, eyeZ + 0.18);
+    consoleBridge.position.set(0, consoleY, eyeZ + 0.22);
     cockpitGroup.add(consoleBridge);
 
     const centerScreenFrame = new THREE.Mesh(
       new THREE.BoxGeometry(0.135, 0.076, 0.022),
       alcantaraMat,
     );
-    centerScreenFrame.position.set(0, dashDeckY + 0.022, dashZ - 0.068);
-    centerScreenFrame.rotation.x = 0.28;
+    centerScreenFrame.position.set(0, dashDeckY + 0.016, dashZ - 0.050);
+    centerScreenFrame.rotation.x = 0.26;
     centerScreenFrame.rotation.y = -0.14;
     cockpitGroup.add(centerScreenFrame);
 
@@ -1178,7 +1474,7 @@ export function createCarModel(
         polygonOffsetUnits: -1,
       }),
     );
-    centerScreenGlow.position.set(0, 0, -0.016);
+    centerScreenGlow.position.set(0, 0, -0.014);
     centerScreenGlow.rotation.y = Math.PI;
     centerScreenFrame.add(centerScreenGlow);
 
@@ -1186,40 +1482,16 @@ export function createCarModel(
       new THREE.CylinderGeometry(0.026, 0.034, 0.020, 12),
       alloyTrimMat,
     );
-    shifterBase.position.set(0, clearance + H * 0.692, eyeZ + 0.20);
+    shifterBase.position.set(0, consoleY + 0.028, eyeZ + 0.24);
     cockpitGroup.add(shifterBase);
 
     const shifterKnob = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.014, 0.011, 0.062, 10),
+      new THREE.CylinderGeometry(0.014, 0.011, 0.060, 10),
       alloyTrimMat,
     );
-    shifterKnob.position.set(0, clearance + H * 0.726, eyeZ + 0.195);
+    shifterKnob.position.set(0, consoleY + 0.062, eyeZ + 0.235);
     shifterKnob.rotation.x = -0.16;
     cockpitGroup.add(shifterKnob);
-
-    // Interior Rearview Mirror
-    const mirrorHousing = new THREE.Mesh(
-      new THREE.BoxGeometry(0.145, 0.036, 0.022),
-      alcantaraMat,
-    );
-    mirrorHousing.position.set(0, clearance + H * 0.916, eyeZ + 0.34);
-    mirrorHousing.rotation.x = -0.12;
-    cockpitGroup.add(mirrorHousing);
-
-    const mirrorGlass = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.132, 0.028),
-      new THREE.MeshStandardMaterial({
-        color: 0x334155,
-        metalness: 0.92,
-        roughness: 0.08,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-      }),
-    );
-    mirrorGlass.position.set(0, 0, -0.016);
-    mirrorGlass.rotation.y = Math.PI;
-    mirrorHousing.add(mirrorGlass);
 
     // 2. Functional Dynamic Dashboard Gauge Cluster (512x256 CanvasTexture)
     const gaugeW = 512;
@@ -1509,10 +1781,10 @@ export function createCarModel(
     steeringWheelRollPivot = new THREE.Group();
     columnPivot.add(steeringWheelRollPivot);
 
-    // Outer wheel rim
-    const swR = 0.116;
+    // Outer wheel rim (ergonomic GT diameter leaves upper sightline into gauge binnacle clear)
+    const swR = 0.104;
     const swRim = new THREE.Mesh(
-      new THREE.TorusGeometry(swR, 0.0145, 10, 28),
+      new THREE.TorusGeometry(swR, 0.014, 10, 28),
       alcantaraMat,
     );
     steeringWheelRollPivot.add(swRim);
@@ -1520,7 +1792,7 @@ export function createCarModel(
     // Sculpted side grip bolsters (9 & 3 o'clock)
     for (const side of [-1, 1]) {
       const grip = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.0175, 0.0175, 0.068, 10),
+        new THREE.CylinderGeometry(0.0165, 0.0165, 0.064, 10),
         carbonMat,
       );
       grip.position.set(side * swR, 0, 0);
@@ -1528,7 +1800,7 @@ export function createCarModel(
 
       // Horizontal brushed aluminum spoke
       const spoke = new THREE.Mesh(
-        new THREE.BoxGeometry(swR * 0.92, 0.024, 0.012),
+        new THREE.BoxGeometry(swR * 0.92, 0.022, 0.012),
         alloyTrimMat,
       );
       spoke.position.set(side * swR * 0.46, -0.008, 0.004);
@@ -1536,17 +1808,17 @@ export function createCarModel(
 
       // Shift paddle behind rim
       const paddle = new THREE.Mesh(
-        new THREE.BoxGeometry(0.022, 0.056, 0.006),
+        new THREE.BoxGeometry(0.020, 0.052, 0.006),
         alloyTrimMat,
       );
-      paddle.position.set(side * (swR * 0.68), 0.012, 0.024);
+      paddle.position.set(side * (swR * 0.68), 0.010, 0.024);
       paddle.rotation.z = side * -0.14;
       steeringWheelRollPivot.add(paddle);
     }
 
     // Bottom 6-o'clock vertical spoke
     const bottomSpoke = new THREE.Mesh(
-      new THREE.BoxGeometry(0.032, swR * 0.9, 0.012),
+      new THREE.BoxGeometry(0.030, swR * 0.9, 0.012),
       alloyTrimMat,
     );
     bottomSpoke.position.set(0, -swR * 0.46, 0.004);
@@ -1554,7 +1826,7 @@ export function createCarModel(
 
     // Vivid 12-o'clock centering stripe (makes steering angle unmistakable at speed!)
     const topBand = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.0165, 0.0165, 0.024, 12),
+      new THREE.CylinderGeometry(0.016, 0.016, 0.022, 12),
       stripeMat,
     );
     topBand.rotation.z = Math.PI / 2;
@@ -1563,7 +1835,7 @@ export function createCarModel(
 
     // Center hub boss + metallic emblem ring
     const swHub = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.044, 0.048, 0.032, 18),
+      new THREE.CylinderGeometry(0.038, 0.042, 0.030, 18),
       alcantaraMat,
     );
     swHub.rotation.x = Math.PI / 2;
@@ -1571,18 +1843,18 @@ export function createCarModel(
     steeringWheelRollPivot.add(swHub);
 
     const hubRing = new THREE.Mesh(
-      new THREE.TorusGeometry(0.024, 0.0035, 6, 18),
+      new THREE.TorusGeometry(0.022, 0.0032, 6, 18),
       alloyTrimMat,
     );
-    hubRing.position.set(0, -0.006, -0.013);
+    hubRing.position.set(0, -0.006, -0.012);
     steeringWheelRollPivot.add(hubRing);
 
     const hubBadge = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.016, 0.016, 0.004, 14),
+      new THREE.CylinderGeometry(0.014, 0.014, 0.004, 14),
       bodyMaterial,
     );
     hubBadge.rotation.x = Math.PI / 2;
-    hubBadge.position.set(0, -0.006, -0.016);
+    hubBadge.position.set(0, -0.006, -0.015);
     steeringWheelRollPivot.add(hubBadge);
 
     // Ensure exterior directional shadow crawl never flickers across interior gauges/trim
@@ -1594,20 +1866,8 @@ export function createCarModel(
     });
   }
 
-  // Flush A-pillars tucked inside windshield side edges & Flying Buttress C-pillars
+  // Flying Buttress C-pillars for mid-engine supercars (A-pillars are already precision-built in cockpit frame above)
   for (const side of [-1, 1]) {
-    const aPillar = new THREE.CylinderGeometry(0.016, 0.022, L * 0.16, 8);
-    aPillar.rotateX(Math.PI / 2);
-    addPart(
-      darkTrimParts,
-      aPillar,
-      side * W * 0.268 * widthScale,
-      clearance + H * 0.75,
-      L * 0.185,
-      0.72,
-      side * -0.14,
-    );
-
     if (arch === 'mclaren' || arch === 'ferrari' || arch === 'jesko') {
       // Flying buttress aero bridges flanking rear engine deck flush to roof
       const buttress = new THREE.BoxGeometry(0.068, 0.055, L * 0.22);
@@ -2337,10 +2597,14 @@ export function createCarModel(
     }),
     setCockpitMode: (inCockpit) => {
       canopyMesh.visible = !inCockpit;
+      if (cockpitGlassMesh) cockpitGlassMesh.visible = inCockpit;
+      if (roofLinerMesh) roofLinerMesh.visible = inCockpit;
       if (cockpitGroupRef) cockpitGroupRef.visible = true;
     },
     setCockpitState: (params) => {
       canopyMesh.visible = !params.active;
+      if (cockpitGlassMesh) cockpitGlassMesh.visible = params.active;
+      if (roofLinerMesh) roofLinerMesh.visible = params.active;
       if (steeringWheelRollPivot) {
         // Negative Z rotation turns 12-o'clock toward +X (driver's left) when steerRad > 0
         steeringWheelRollPivot.rotation.z = -params.steerRad * 3.4;
