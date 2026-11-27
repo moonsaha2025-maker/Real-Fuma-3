@@ -380,6 +380,8 @@ export class GameEngine {
   // Loop & Callbacks
   private frameId = 0;
   private disposed = false;
+  private renderSuspended = false;
+  private loopActive = false;
   private elapsedTime = 0;
   private fpsCounter = 60;
   private fpsAccumFrames = 0;
@@ -424,7 +426,11 @@ export class GameEngine {
       onWashComplete?: () => void;
       onNoBrakeDriftUpdate?: (seconds: number) => void;
     },
+    options?: {
+      initiallySuspended?: boolean;
+    },
   ) {
+    this.renderSuspended = Boolean(options?.initiallySuspended);
     this.container = container;
     this.settings = settings;
     this.onTelemetry = callbacks.onTelemetry;
@@ -753,7 +759,13 @@ export class GameEngine {
     document.addEventListener('webkitfullscreenchange', this.handleFullscreenResize);
     window.visualViewport?.addEventListener('resize', this.handleResize);
 
-    this.startLoop();
+    if (this.renderSuspended) {
+      // Pre-warm one static showcase frame so first visible frame has zero shader hitch
+      this.stepSimulation(0.016);
+      this.renderer.render(this.scene, this.camera);
+    } else {
+      this.startLoop();
+    }
   }
 
   private handleContextLost = (e: Event): void => {
@@ -1765,9 +1777,28 @@ export class GameEngine {
     };
   };
 
+  public setRenderSuspended(suspended: boolean): void {
+    if (this.renderSuspended === suspended) return;
+    this.renderSuspended = suspended;
+    if (suspended) {
+      cancelAnimationFrame(this.frameId);
+      clearTimeout(this.frameId);
+      this.loopActive = false;
+    } else if (!this.disposed) {
+      this.clock.getDelta();
+      this.startLoop();
+    }
+  }
+
   private startLoop(): void {
+    if (this.loopActive || this.disposed || this.renderSuspended) return;
+    this.loopActive = true;
+
     const tick = () => {
-      if (this.disposed) return;
+      if (this.disposed || this.renderSuspended) {
+        this.loopActive = false;
+        return;
+      }
       const rawDt = this.clock.getDelta();
       const dt = Math.min(rawDt, 0.05);
       if (rawDt > 0.0001) {

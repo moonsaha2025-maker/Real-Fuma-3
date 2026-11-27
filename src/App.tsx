@@ -352,39 +352,58 @@ export default function App() {
     const container = canvasContainerRef.current;
     if (!container || engineRef.current) return;
 
-    const engine = new GameEngine(container, activeCarData, save.settings, {
-      onTelemetry: (t) => setTelemetry(t),
-      onRaceComplete: (res) => {
-        callbacksRef.current.recordRaceResult(res);
-        setRaceResult(res);
-      },
-      onFreeRoamReward: (cash, xp, rep, distKm, topSpd, driftPts) => {
-        callbacksRef.current.addFreeRoamRewards(
-          cash,
-          xp,
-          rep,
-          distKm,
-          topSpd,
-          driftPts,
-        );
-      },
-      onRegionUnlock: (regId) => {
-        callbacksRef.current.unlockRegion(regId);
-      },
-      onDirtChange: (carId, dirtLevel) => {
-        callbacksRef.current.setCarDirtLevel(carId, dirtLevel);
-      },
-      onWashComplete: () => {
-        setIsWashingCar(false);
-      },
-      onNoBrakeDriftUpdate: (sec) => {
-        callbacksRef.current.recordNoBrakeDriftSec(sec);
-      },
-    });
-    engineRef.current = engine;
+    let cancelled = false;
+    const initTimer = window.setTimeout(() => {
+      if (cancelled || engineRef.current) return;
+      const curSave = latestSaveRef.current;
+      const curCar =
+        curSave.ownedCars[curSave.activeCarId] ??
+        Object.values(curSave.ownedCars)[0] ??
+        activeCarData;
+
+      const engine = new GameEngine(
+        container,
+        curCar,
+        curSave.settings,
+        {
+          onTelemetry: (t) => setTelemetry(t),
+          onRaceComplete: (res) => {
+            callbacksRef.current.recordRaceResult(res);
+            setRaceResult(res);
+          },
+          onFreeRoamReward: (cash, xp, rep, distKm, topSpd, driftPts) => {
+            callbacksRef.current.addFreeRoamRewards(
+              cash,
+              xp,
+              rep,
+              distKm,
+              topSpd,
+              driftPts,
+            );
+          },
+          onRegionUnlock: (regId) => {
+            callbacksRef.current.unlockRegion(regId);
+          },
+          onDirtChange: (carId, dirtLevel) => {
+            callbacksRef.current.setCarDirtLevel(carId, dirtLevel);
+          },
+          onWashComplete: () => {
+            setIsWashingCar(false);
+          },
+          onNoBrakeDriftUpdate: (sec) => {
+            callbacksRef.current.recordNoBrakeDriftSec(sec);
+          },
+        },
+        { initiallySuspended: screenRef.current === 'loading' },
+      );
+      engine.setShowcaseRightOffset(screenRef.current === 'main_menu');
+      engineRef.current = engine;
+    }, 900);
 
     return () => {
-      engine.dispose();
+      cancelled = true;
+      window.clearTimeout(initTimer);
+      engineRef.current?.dispose();
       engineRef.current = null;
       audioEngine.dispose();
     };
@@ -398,6 +417,9 @@ export default function App() {
 
   useEffect(() => {
     engineRef.current?.setShowcaseRightOffset(screen === 'main_menu');
+    if (screen !== 'loading') {
+      engineRef.current?.setRenderSuspended(false);
+    }
   }, [screen]);
 
   useEffect(() => {
@@ -718,7 +740,11 @@ export default function App() {
       {screen === 'loading' && (
         <LoadingScreen
           radioStation={save.settings.radioStation}
+          onWarmup={() => {
+            engineRef.current?.setRenderSuspended(false);
+          }}
           onReady={() => {
+            engineRef.current?.setRenderSuspended(false);
             engineRef.current?.setShowcaseMode(true);
             setScreen(save.onboarded ? 'main_menu' : 'onboarding');
           }}
