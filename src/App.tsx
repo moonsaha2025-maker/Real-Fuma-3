@@ -13,9 +13,25 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { PauseModal, RaceResultsModal } from './components/PauseAndResultsModal';
 import { PhotoModeOverlay } from './components/PhotoModeOverlay';
 import { ProfileModal } from './components/ProfileModal';
-import { QuestId, RaceEvent, RaceResultSummary, ScreenState, TimeOfDay, WeatherType, ControlInputState, ControlScheme, LiveTelemetry, MapLandmark, OwnedCarData } from './types/game';
+import {
+  QuestId,
+  RaceEvent,
+  RaceResultSummary,
+  ScreenState,
+  TimeOfDay,
+  WeatherType,
+  ControlInputState,
+  ControlScheme,
+  LiveTelemetry,
+  MapLandmark,
+  OnlinePlayerState,
+  OnlineRoom,
+  OwnedCarData,
+  RegionId,
+} from './types/game';
 import { QuestsModal } from './components/QuestsModal';
 import { QuickRaceModal } from './components/QuickRaceModal';
+import { OnlineLobbyModal } from './components/OnlineLobbyModal';
 import { SettingsModal } from './components/SettingsModal';
 import { WorldMapModal } from './components/WorldMapModal';
 import { getCarSpec } from './data/cars';
@@ -33,6 +49,17 @@ import {
   signOutGoogle,
   syncPrivateAccountDoc,
 } from './services/firebase';
+import {
+  createOnlineRoom,
+  findOnlineRoom,
+  joinOnlineRoom,
+  leaveOnlineRoom,
+  publishOnlinePlayerPose,
+  subscribePublicRooms,
+  subscribeRoom,
+  subscribeRoomPlayers,
+  updateOnlineRoomMeta,
+} from './services/onlineMultiplayer';
 import { normalizeSaveData, useGameStore } from './state/useGameStore';
 import {
   exitAppFullscreen,
@@ -118,6 +145,16 @@ export default function App() {
   const [cloudSyncState, setCloudSyncState] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle');
+  const [publicRooms, setPublicRooms] = useState<OnlineRoom[]>([]);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [activeRoom, setActiveRoom] = useState<OnlineRoom | null>(null);
+  const [roomPlayers, setRoomPlayers] = useState<OnlinePlayerState[]>([]);
+  const [onlineBusy, setOnlineBusy] = useState(false);
+  const [onlineError, setOnlineError] = useState<string | null>(null);
+  const activeRoomRef = useRef<OnlineRoom | null>(null);
+  activeRoomRef.current = activeRoom;
+  const roomPlayersRef = useRef<OnlinePlayerState[]>([]);
+  roomPlayersRef.current = roomPlayers;
   const cloudHydratedUidRef = useRef<string | null>(null);
   const inFlightHydrateRef = useRef<{
     uid: string;
@@ -330,6 +367,18 @@ export default function App() {
 
   const handleGoogleSignOut = useCallback(async () => {
     try {
+      if (activeRoomId) {
+        const isHost = activeRoomRef.current?.hostUid === authUser?.uid;
+        await leaveOnlineRoom(
+          activeRoomId,
+          Boolean(isHost),
+          roomPlayersRef.current.length,
+        ).catch(() => {});
+        setActiveRoomId(null);
+        setActiveRoom(null);
+        setRoomPlayers([]);
+        engineRef.current?.setOnlineSession(null, null);
+      }
       await signOutGoogle();
       cloudHydratedUidRef.current = null;
       setAuthUser(null);
@@ -338,7 +387,7 @@ export default function App() {
     } catch {
       notify('Could not sign out cleanly');
     }
-  }, [notify]);
+  }, [activeRoomId, authUser?.uid, notify]);
 
   const handleSyncNow = useCallback(async () => {
     if (!authUser) return;
@@ -364,6 +413,283 @@ export default function App() {
       notify('Cloud sync failed');
     }
   }, [authUser, hydrateAccountFromCloud, notify]);
+
+  // Subscribe to public online rooms while viewing the Online Lobby
+  useEffect(() => {
+    if (!authUser || screen !== 'online' || activeRoomId) {
+      return;
+    }
+    const unsub = subscribePublicRooms(
+      (rooms) => {
+        setPublicRooms(rooms);
+        setOnlineError(null);
+      },
+      () => {
+        setOnlineError('Unable to load live online rooms right now.');
+      },
+    );
+    return () => unsub();
+  }, [authUser, screen, activeRoomId]);
+
+  // Subscribe to joined room metadata & live connected players
+  useEffect(() => {
+    if (!authUser || !activeRoomId) {
+      setActiveRoom(null);
+      setRoomPlayers([]);
+      engineRef.current?.setOnlineSession(null, null);
+      return;
+    }
+
+    const unsubRoom = subscribeRoom(
+      activeRoomId,
+      (room) => {
+        if (!room || room.status === 'closed') {
+          setActiveRoomId(null);
+          setActiveRoom(null);
+          setRoomPlayers([]);
+          engineRef.current?.setOnlineSession(null, null);
+          notify('Online session ended by host');
+          return;
+        }
+        setActiveRoom(room);
+        engineRef.current?.setOnlineSession(room.roomId, room.name);
+        if (screenRef.current === 'playing') {
+          engineRef.current?.setAtmosphere(room.weather, room.timeOfDay, false);
+        }
+      },
+      () => {
+        setOnlineError('Lost connection to online session.');
+      },
+    );
+
+    const unsubPlayers = subscribeRoomPlayers(
+      activeRoomId,
+      (players) => {
+        setRoomPlayers(players);
+        engineRef.current?.syncOnlinePlayers(players, authUser.uid);
+      },
+      () => {
+        setOnlineError('Unable to sync remote drivers.');
+      },
+    );
+
+    const handlePageHide = () => {
+      const isHost = activeRoomRef.current?.hostUid === authUser.uid;
+      void leaveOnlineRoom(
+        activeRoomId,
+        Boolean(isHost),
+        roomPlayersRef.current.length,
+      ).catch(() => {});
+    };
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      unsubRoom();
+      unsubPlayers();
+    };
+  }, [authUser, activeRoomId, notify]);
+
+  // Real-time vehicle pose publisher (4 Hz driving, 0.25 Hz lobby heartbeat)
+  useEffect(() => {
+    if (!authUser || !activeRoomId) return;
+    let lastSentAt = 0;
+    let lastX = 0;
+    let lastZ = 0;
+    let lastStateSig = '';
+    let publishing = false;
+
+    const id = window.setInterval(() => {
+      if (document.hidden || publishing) return;
+      const engine = engineRef.current;
+      if (!engine) return;
+
+      const now = Date.now();
+      const pose = engine.getLocalPoseSnapshot();
+      const isPlaying = screenRef.current === 'playing';
+      const moved = Math.hypot(pose.x - lastX, pose.z - lastZ);
+      const sig = `${pose.braking}|${pose.nitroActive}|${pose.headlightsOn}|${latestSaveRef.current.activeCarId}`;
+
+      const needsPublish = isPlaying
+        ? now - lastSentAt >= 2600 ||
+          (now - lastSentAt >= 240 &&
+            (moved > 0.35 || pose.speedKmh > 1.5 || sig !== lastStateSig))
+        : now - lastSentAt >= 4500 || sig !== lastStateSig;
+
+      if (!needsPublish) return;
+
+      publishing = true;
+      lastSentAt = now;
+      lastX = pose.x;
+      lastZ = pose.z;
+      lastStateSig = sig;
+
+      void publishOnlinePlayerPose(activeRoomId, latestSaveRef.current, pose)
+        .catch(() => {})
+        .finally(() => {
+          publishing = false;
+        });
+    }, 220);
+
+    return () => window.clearInterval(id);
+  }, [authUser, activeRoomId]);
+
+  const handleCreateOnlineRoom = useCallback(
+    async (params: {
+      name: string;
+      isPublic: boolean;
+      regionId: RegionId;
+      weather: WeatherType;
+      timeOfDay: TimeOfDay;
+    }) => {
+      if (!authUser) return;
+      setOnlineBusy(true);
+      setOnlineError(null);
+      try {
+        const room = await createOnlineRoom(params);
+        const reg = REGIONS.find((r) => r.id === room.regionId) ?? REGIONS[0];
+        const pt = getRoadPointAt(reg.spawnS, 0);
+        const initialPose = engineRef.current?.getLocalPoseSnapshot() ?? {
+          x: pt.x,
+          y: pt.y,
+          z: pt.z,
+          heading: pt.heading,
+          vx: 0,
+          vz: 0,
+          speedKmh: 0,
+          steerAngle: 0,
+          braking: false,
+          nitroActive: false,
+          headlightsOn: false,
+          s: reg.spawnS,
+        };
+        await joinOnlineRoom(room.roomId, latestSaveRef.current, initialPose);
+        setActiveRoom(room);
+        setActiveRoomId(room.roomId);
+        engineRef.current?.setOnlineSession(room.roomId, room.name);
+        notify(`Online Room ${room.roomId} Created`);
+      } catch (err) {
+        setOnlineError(
+          err instanceof Error ? err.message : 'Could not create online room.',
+        );
+      } finally {
+        setOnlineBusy(false);
+      }
+    },
+    [authUser, notify],
+  );
+
+  const handleJoinOnlineRoom = useCallback(
+    async (roomId: string) => {
+      if (!authUser) return;
+      setOnlineBusy(true);
+      setOnlineError(null);
+      try {
+        const room = await findOnlineRoom(roomId);
+        if (!room) {
+          setOnlineError('Room not found or already closed.');
+          return;
+        }
+        const reg = REGIONS.find((r) => r.id === room.regionId) ?? REGIONS[0];
+        const pt = getRoadPointAt(reg.spawnS, 0);
+        const initialPose = engineRef.current?.getLocalPoseSnapshot() ?? {
+          x: pt.x,
+          y: pt.y,
+          z: pt.z,
+          heading: pt.heading,
+          vx: 0,
+          vz: 0,
+          speedKmh: 0,
+          steerAngle: 0,
+          braking: false,
+          nitroActive: false,
+          headlightsOn: false,
+          s: reg.spawnS,
+        };
+        await joinOnlineRoom(room.roomId, latestSaveRef.current, initialPose);
+        setActiveRoom(room);
+        setActiveRoomId(room.roomId);
+        engineRef.current?.setOnlineSession(room.roomId, room.name);
+        notify(`Joined ${room.name}`);
+      } catch (err) {
+        setOnlineError(
+          err instanceof Error ? err.message : 'Could not join online room.',
+        );
+      } finally {
+        setOnlineBusy(false);
+      }
+    },
+    [authUser, notify],
+  );
+
+  const handleLeaveOnlineRoom = useCallback(async () => {
+    if (!activeRoomId) return;
+    setOnlineBusy(true);
+    try {
+      const isHost = activeRoomRef.current?.hostUid === authUser?.uid;
+      await leaveOnlineRoom(
+        activeRoomId,
+        Boolean(isHost),
+        roomPlayersRef.current.length,
+      );
+      setActiveRoomId(null);
+      setActiveRoom(null);
+      setRoomPlayers([]);
+      engineRef.current?.setOnlineSession(null, null);
+      notify('Left Online Session');
+    } catch {
+      setOnlineError('Could not leave online room cleanly.');
+    } finally {
+      setOnlineBusy(false);
+    }
+  }, [activeRoomId, authUser?.uid, notify]);
+
+  const handleUpdateOnlineRoomMeta = useCallback(
+    async (
+      patch: Partial<Pick<OnlineRoom, 'weather' | 'timeOfDay' | 'regionId'>>,
+    ) => {
+      if (!activeRoomId) return;
+      try {
+        await updateOnlineRoomMeta(activeRoomId, patch);
+      } catch {
+        setOnlineError('Could not update room environment.');
+      }
+    },
+    [activeRoomId],
+  );
+
+  const launchOnlineDrive = useCallback(() => {
+    const room = activeRoomRef.current;
+    if (!room) return;
+    if (
+      save.settings.autoFullscreen &&
+      !manualExitFullscreenRef.current &&
+      !isInFullscreen()
+    ) {
+      void requestAppFullscreen();
+    }
+    setPaused(false);
+    setPhotoMode(false);
+    setRaceResult(null);
+    setActiveRaceConfig(null);
+    const other = roomPlayersRef.current.find((p) => p.uid !== authUser?.uid);
+    const reg = REGIONS.find((r) => r.id === room.regionId) ?? REGIONS[0];
+    const spawnS = other ? (other.s - 0.004 + 1) % 1 : reg.spawnS;
+
+    engineRef.current?.setOnlineSession(room.roomId, room.name);
+    engineRef.current?.syncOnlinePlayers(
+      roomPlayersRef.current,
+      authUser?.uid ?? null,
+    );
+    engineRef.current?.setPhotoMode(false);
+    engineRef.current?.setPlayerCar(activeCarData);
+    engineRef.current?.setAtmosphere(room.weather, room.timeOfDay, true);
+    engineRef.current?.startFreeRoamAtS(spawnS);
+    if (room.hostUid === authUser?.uid && room.status === 'open') {
+      void updateOnlineRoomMeta(room.roomId, { status: 'active' }).catch(() => {});
+    }
+    setScreen('playing');
+  }, [activeCarData, authUser?.uid, save.settings.autoFullscreen]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -614,6 +940,7 @@ export default function App() {
       setPhotoMode(false);
       setRaceResult(null);
       setActiveRaceConfig(null);
+      engineRef.current?.setOnlineSession(null, null);
       engineRef.current?.setPhotoMode(false);
       engineRef.current?.setPlayerCar(activeCarData);
       if (weather && time) {
@@ -639,6 +966,7 @@ export default function App() {
       setRaceResult(null);
       setShowWorldMap(false);
       setActiveRaceConfig({ event, weather, time });
+      engineRef.current?.setOnlineSession(null, null);
       engineRef.current?.setPhotoMode(false);
       engineRef.current?.setPlayerCar(activeCarData);
       engineRef.current?.startRaceEvent(event, weather, time);
@@ -810,6 +1138,8 @@ export default function App() {
           authUser={authUser}
           authBusy={authBusy}
           cloudSyncState={cloudSyncState}
+          activeOnlineRoomId={activeRoomId}
+          onlinePlayerCount={roomPlayers.length}
           onGoogleSignIn={() => {
             void handleGoogleSignIn();
           }}
@@ -861,7 +1191,7 @@ export default function App() {
           onBuyCar={buyCar}
           onUpdateCustomization={updateCarCustomization}
           onBuyUpgrade={buyUpgrade}
-          onDriveNow={() => startFreeRoam()}
+          onDriveNow={() => (activeRoomId ? launchOnlineDrive() : startFreeRoam())}
           onResetOrbit={() => engineRef.current?.resetShowcaseOrbit()}
         />
       )}
@@ -871,6 +1201,27 @@ export default function App() {
           save={save}
           onBack={enterMainMenu}
           onStartEvent={(evt) => startRaceEvent(evt)}
+        />
+      )}
+
+      {screen === 'online' && (
+        <OnlineLobbyModal
+          save={save}
+          activeCar={activeCarData}
+          authUser={authUser}
+          authBusy={authBusy}
+          publicRooms={publicRooms}
+          activeRoom={activeRoom}
+          roomPlayers={roomPlayers}
+          onlineBusy={onlineBusy}
+          onlineError={onlineError}
+          onGoogleSignIn={handleGoogleSignIn}
+          onCreateRoom={handleCreateOnlineRoom}
+          onJoinRoom={handleJoinOnlineRoom}
+          onLeaveRoom={handleLeaveOnlineRoom}
+          onUpdateRoomMeta={handleUpdateOnlineRoomMeta}
+          onLaunchOnlineDrive={launchOnlineDrive}
+          onBack={enterMainMenu}
         />
       )}
 
@@ -939,6 +1290,10 @@ export default function App() {
           onCycleControlScheme={handleCycleControlScheme}
           onEnterPhotoMode={enterPhotoMode}
           onOpenMap={() => setShowWorldMap(true)}
+          onOpenOnlineLobby={() => {
+            engineRef.current?.setShowcaseMode(true);
+            setScreen('online');
+          }}
           onPause={() => {
             setPaused(true);
             engineRef.current?.setPaused(true);
@@ -1050,6 +1405,7 @@ export default function App() {
           playerX={telemetry.playerX}
           playerZ={telemetry.playerZ}
           playerHeading={telemetry.playerHeading}
+          onlinePlayers={telemetry.onlinePlayers}
           onClose={() => setShowWorldMap(false)}
           onFastTravel={(x, z) => {
             setShowWorldMap(false);

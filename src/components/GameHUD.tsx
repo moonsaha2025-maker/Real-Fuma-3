@@ -5,6 +5,7 @@ import {
   Gamepad2,
   MapPin,
   Pause,
+  Users,
   Wrench,
 } from 'lucide-react';
 import { TRACK_STATIONS } from '../data/track';
@@ -26,6 +27,7 @@ interface GameHUDProps {
   onCycleControlScheme: () => void;
   onEnterPhotoMode: () => void;
   onOpenMap: () => void;
+  onOpenOnlineLobby?: () => void;
   onPause: () => void;
   onInteractLandmark: (lm: MapLandmark) => void;
   onStartNearbyEvent: (evt: RaceEvent) => void;
@@ -135,6 +137,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onCycleControlScheme,
   onEnterPhotoMode,
   onOpenMap,
+  onOpenOnlineLobby,
   onPause,
   onInteractLandmark,
   onStartNearbyEvent,
@@ -344,6 +347,17 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                     fill="#f59e0b"
                   />
                 ))}
+                {(telemetry.onlinePlayers ?? []).map((op) => (
+                  <circle
+                    key={`ol-${op.uid}`}
+                    cx={-op.x}
+                    cy={-op.z}
+                    r={12}
+                    fill="#10b981"
+                    stroke="#ffffff"
+                    strokeWidth={3}
+                  />
+                ))}
               </g>
               {/* Player Direction Arrow */}
               <polygon points="0,-14 9,11 0,6 -9,11" fill="#f43f5e" />
@@ -467,8 +481,41 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
         </div>
 
-        {/* Top-Center: Active Race Telemetry or Live Drift Counter Only */}
+        {/* Top-Center: Online Room Bar + Active Race Telemetry + Live Drift Counter */}
         <div className="flex flex-col items-center gap-1.5">
+          {telemetry.onlineMode && (
+            <div className="pointer-events-auto bg-black/55 border border-emerald-400/45 px-2.5 py-1 flex items-center gap-2 text-[10px]">
+              <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="font-mono-num font-bold text-emerald-300 tabular-nums whitespace-nowrap">
+                {telemetry.onlineRoomId}
+              </span>
+              <span className="text-white/30 hidden sm:inline">|</span>
+              <span className="text-white/90 font-display hidden sm:inline whitespace-nowrap">
+                {(telemetry.onlinePlayers?.length ?? 0) + 1} ONLINE
+              </span>
+              {(telemetry.onlinePlayers ?? []).slice(0, 2).map((op) => (
+                <span
+                  key={op.uid}
+                  className="hidden md:inline-flex items-center gap-1 text-slate-200 border-l border-white/15 pl-2 max-w-[140px] truncate"
+                >
+                  <span className="truncate font-semibold">{op.googleDisplayName}</span>
+                  <span className="font-mono-num text-emerald-300 tabular-nums shrink-0">
+                    {op.speedKmh}
+                  </span>
+                </span>
+              ))}
+              {onOpenOnlineLobby && (
+                <button
+                  type="button"
+                  onClick={onOpenOnlineLobby}
+                  className="ml-1 px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-400/40 text-emerald-200 font-display font-bold tracking-wider uppercase cursor-pointer whitespace-nowrap"
+                >
+                  LOBBY
+                </button>
+              )}
+            </div>
+          )}
+
           {telemetry.raceState === 'racing' && (
             <div className="bg-black/40 border border-white/15 px-3 py-1 flex items-center gap-3 text-[11px]">
               <div className="font-display font-bold text-white/90 tabular-nums">

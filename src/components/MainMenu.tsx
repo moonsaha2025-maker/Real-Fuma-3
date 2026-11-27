@@ -31,6 +31,8 @@ interface MainMenuProps {
   authUser?: FirebaseUser | null;
   authBusy?: boolean;
   cloudSyncState?: 'idle' | 'syncing' | 'synced' | 'error';
+  activeOnlineRoomId?: string | null;
+  onlinePlayerCount?: number;
   onGoogleSignIn?: () => void;
   isFullscreen?: boolean;
   fullscreenSupported?: boolean;
@@ -55,6 +57,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   authUser = null,
   authBusy = false,
   cloudSyncState = 'idle',
+  activeOnlineRoomId = null,
+  onlinePlayerCount = 0,
   onGoogleSignIn,
   isFullscreen = false,
   fullscreenSupported = false,
@@ -281,7 +285,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
         {/* Middle & Lower Split: Left Stacked Mode Cards + Bottom-Right START RACE CTA */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 my-auto sm:my-0 sm:mt-auto pointer-events-none">
-          {/* Left Vertical Stack: CLASSIC HIGHWAY / Race / GARAGE */}
+          {/* Left Vertical Stack: CLASSIC HIGHWAY / ONLINE / Race / GARAGE */}
           <div className="flex flex-col gap-2 w-[235px] sm:w-[300px] lg:w-[335px] pointer-events-auto">
             {/* Card 1: CLASSIC HIGHWAY (Selected with Crisp White Chamfered Outline) */}
             <div
@@ -290,7 +294,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             >
               <button
                 onClick={() => handleClick(onPlayFreeRoam)}
-                className="relative w-full text-left px-4 py-3 sm:py-3.5 min-h-[68px] sm:min-h-[84px] flex flex-col justify-between cursor-pointer overflow-hidden focus-visible:outline-none"
+                className="relative w-full text-left px-4 py-2.5 sm:py-3 min-h-[60px] sm:min-h-[72px] flex flex-col justify-between cursor-pointer overflow-hidden focus-visible:outline-none"
                 style={{
                   clipPath: CARD_CHAMFER_CLIP,
                   background: `linear-gradient(125deg, #5b21b6 0%, #7c3aed 58%, #4c1d95 100%)`,
@@ -304,20 +308,54 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <span className="relative z-10 font-display italic font-bold text-sm sm:text-base lg:text-lg tracking-wider text-white uppercase drop-shadow whitespace-nowrap">
                   CLASSIC HIGHWAY
                 </span>
-                <span className="relative z-10 text-[10px] sm:text-[11px] font-display tracking-widest text-violet-200/85 uppercase">
+                <span className="relative z-10 text-[10px] sm:text-[11px] font-display tracking-widest text-violet-200/85 uppercase truncate">
                   Open Coast · {spec.name}
                 </span>
               </button>
             </div>
 
-            {/* Card 2: Race (Events & Quick Race Modes) */}
+            {/* Card 2: ONLINE MODE (Google Authenticated Multiplayer) */}
+            <div
+              className="p-[2px] bg-transparent hover:bg-emerald-300/70 transition-all duration-150 hover:translate-x-1 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+              style={{ clipPath: CARD_CHAMFER_CLIP }}
+            >
+              <button
+                onClick={() => handleClick(() => onNavigate('online'))}
+                className="relative w-full text-left px-4 py-2.5 sm:py-3 min-h-[58px] sm:min-h-[70px] flex flex-col justify-between cursor-pointer overflow-hidden focus-visible:outline-none"
+                style={{
+                  clipPath: CARD_CHAMFER_CLIP,
+                  background: `linear-gradient(125deg, #065f46 0%, #059669 56%, #047857 100%)`,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ backgroundImage: STRIPED_TEXTURE }}
+                />
+                <div className="relative z-10 flex items-center justify-between gap-2">
+                  <span className="font-display italic font-bold text-sm sm:text-base lg:text-lg tracking-wider text-white uppercase drop-shadow whitespace-nowrap">
+                    ONLINE MODE
+                  </span>
+                  <Users className="w-4 h-4 text-emerald-200 shrink-0" />
+                </div>
+                <span className="relative z-10 text-[10px] sm:text-[11px] font-display tracking-widest text-emerald-100/90 uppercase truncate">
+                  {activeOnlineRoomId
+                    ? `Room ${activeOnlineRoomId} · ${onlinePlayerCount} Live`
+                    : authUser
+                      ? `Google ID · ${authUser.displayName || 'Connected'}`
+                      : 'Multiplayer · Google Sign-In'}
+                </span>
+              </button>
+            </div>
+
+            {/* Card 3: Race (Events & Quick Race Modes) */}
             <div
               className="p-[2px] bg-transparent hover:bg-white/60 transition-all duration-150 hover:translate-x-1 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
               style={{ clipPath: CARD_CHAMFER_CLIP }}
             >
               <button
                 onClick={() => handleClick(() => onNavigate('quick_race'))}
-                className="relative w-full text-left px-4 py-3 sm:py-3.5 min-h-[62px] sm:min-h-[76px] flex items-center cursor-pointer overflow-hidden focus-visible:outline-none"
+                className="relative w-full text-left px-4 py-2.5 sm:py-3 min-h-[54px] sm:min-h-[66px] flex items-center cursor-pointer overflow-hidden focus-visible:outline-none"
                 style={{
                   clipPath: CARD_CHAMFER_CLIP,
                   background: `linear-gradient(125deg, #9d174d 0%, #db2777 56%, #be185d 100%)`,
@@ -334,14 +372,14 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               </button>
             </div>
 
-            {/* Card 3: GARAGE (with LV rank & dark car count notch bottom-right) */}
+            {/* Card 4: GARAGE (with LV rank & dark car count notch bottom-right) */}
             <div
               className="p-[2px] bg-transparent hover:bg-white/60 transition-all duration-150 hover:translate-x-1 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
               style={{ clipPath: CARD_CHAMFER_CLIP }}
             >
               <button
                 onClick={() => handleClick(() => onNavigate('garage'))}
-                className="relative w-full text-left px-4 pt-2.5 pb-2 min-h-[64px] sm:min-h-[78px] flex items-stretch justify-between cursor-pointer overflow-hidden focus-visible:outline-none"
+                className="relative w-full text-left px-4 pt-2 pb-1.5 min-h-[58px] sm:min-h-[68px] flex items-stretch justify-between cursor-pointer overflow-hidden focus-visible:outline-none"
                 style={{
                   clipPath: CARD_CHAMFER_CLIP,
                   background: `linear-gradient(125deg, #1e3a8a 0%, #2563eb 56%, #1d4ed8 100%)`,
@@ -356,7 +394,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   GARAGE
                 </span>
 
-                <div className="relative z-10 flex flex-col items-end justify-between -mr-4 -mb-2">
+                <div className="relative z-10 flex flex-col items-end justify-between -mr-4 -mb-1.5">
                   <div className="pr-4 flex items-baseline gap-1 text-white drop-shadow">
                     <span className="font-display italic text-[11px] font-semibold opacity-90">
                       LV

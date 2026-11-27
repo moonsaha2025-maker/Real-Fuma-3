@@ -17,6 +17,7 @@ import {
   ControlInputState,
   GameSettings,
   LiveTelemetry,
+  OnlinePlayerState,
   OwnedCarData,
   RaceEvent,
   RaceResultSummary,
@@ -27,6 +28,7 @@ import { AtmosphereSystem, createAtmosphereSystem } from './atmosphere';
 import { audioEngine } from './audio';
 import { CarModelRig, createCarModel } from './carModel';
 import { CrashEffectsSystem } from './crashEffects';
+import { OnlinePlayersManager } from './onlinePlayers';
 import {
   createInitialPhysicsStateAtS,
   stepVehiclePhysics,
@@ -242,6 +244,10 @@ export class GameEngine {
   private atmosphere: AtmosphereSystem;
   private world: BuiltWorld;
   private trafficAI: TrafficAndAIManager;
+  private onlinePlayers: OnlinePlayersManager;
+  private onlineRoomId: string | null = null;
+  private onlineRoomName: string | null = null;
+  private lastBrakeActive = false;
   private pmremGenerator: THREE.PMREMGenerator;
   private envBakeScene: THREE.Scene;
   private envBakeMesh: THREE.Mesh;
@@ -679,6 +685,9 @@ export class GameEngine {
       settings.trafficDensity ?? 'normal',
     );
     this.scene.add(this.trafficAI.group);
+
+    this.onlinePlayers = new OnlinePlayersManager(this.textures.contactShadowMap);
+    this.scene.add(this.onlinePlayers.group);
 
     // Comprehensive Weather VFX System (3D Streaks, Splashes, Spray, Fog Banks, Lightning, Beam Haze)
     this.weatherEffects = new WeatherEffectsSystem(
@@ -1235,6 +1244,39 @@ export class GameEngine {
     );
     this.camera.fov = this.cameraMode === 'far' ? 50 : 48;
     this.camera.updateProjectionMatrix();
+  }
+
+  public setOnlineSession(roomId: string | null, roomName: string | null): void {
+    this.onlineRoomId = roomId;
+    this.onlineRoomName = roomName;
+    if (!roomId) {
+      this.onlinePlayers.clear();
+    }
+  }
+
+  public syncOnlinePlayers(
+    players: OnlinePlayerState[],
+    localUid: string | null,
+  ): void {
+    this.onlinePlayers.syncRemotePlayers(players, localUid);
+  }
+
+  public getLocalPoseSnapshot() {
+    const autoHL = this.getAutoHeadlightLevel() > 0.25;
+    return {
+      x: this.physics.x,
+      y: this.physics.y,
+      z: this.physics.z,
+      heading: this.physics.heading,
+      vx: this.physics.vx,
+      vz: this.physics.vz,
+      speedKmh: this.physics.speedKmh,
+      steerAngle: this.physics.steerAngle,
+      braking: this.lastBrakeActive,
+      nitroActive: this.physics.nitroActive,
+      headlightsOn: this.headlightsManual ?? autoHL,
+      s: this.physics.trackProgress,
+    };
   }
 
   public startFreeRoamAtS(s = DRIVE_SPAWN_S): void {
@@ -2394,9 +2436,14 @@ export class GameEngine {
       hlOn,
     );
 
+    const onlineRes = this.onlineRoomId
+      ? this.onlinePlayers.update(dt, this.physics, hlOn, this.elapsedTime)
+      : { collisionImpact: 0 };
+
     const maxImpact = Math.max(
       this.physics.lastCollisionImpact,
       aiRes.collisionImpact,
+      onlineRes.collisionImpact,
     );
     if (maxImpact > 0.1) {
       const kind = this.physics.lastCollisionKind === 'none' ? 'car' : this.physics.lastCollisionKind;
@@ -2468,9 +2515,10 @@ export class GameEngine {
       this.physics.damageLevel > 0.78 && Math.sin(this.elapsedTime * 37) > 0.72
         ? false
         : hlOn;
+    this.lastBrakeActive = input.brake > 0.1;
     this.playerCarRig.setLights(
       damagedFlicker,
-      input.brake > 0.1,
+      this.lastBrakeActive,
       flameVisible,
       this.elapsedTime,
       backfireOnly,
@@ -2580,12 +2628,21 @@ export class GameEngine {
       isWet ? 0.45 : this.weather === 'fog' ? 0.55 : 0,
     );
     if (trafficLightFactor > 0.04 && this.trafficHeadlights.length > 0) {
-      const count = this.trafficAI.getNearestHeadlights(
+      let count = this.trafficAI.getNearestHeadlights(
         this.physics.x,
         this.physics.z,
         this.nearestHeadlightTargets,
         this.trafficHeadlights.length,
       );
+      if (this.onlineRoomId) {
+        this.onlinePlayers.getNearestHeadlights(
+          this.physics.x,
+          this.physics.z,
+          this.nearestHeadlightTargets,
+          this.trafficHeadlights.length,
+        );
+        count = Math.min(this.nearestHeadlightTargets.length, this.trafficHeadlights.length);
+      }
       for (let i = 0; i < this.trafficHeadlights.length; i++) {
         const tl = this.trafficHeadlights[i];
         if (i < count) {
@@ -3180,6 +3237,10 @@ export class GameEngine {
               .filter((t) => t.carRig.root.visible)
               .map((t) => ({ x: t.x, z: t.z }))
           : [],
+      onlineMode: Boolean(this.onlineRoomId),
+      onlineRoomId: this.onlineRoomId,
+      onlineRoomName: this.onlineRoomName,
+      onlinePlayers: this.onlineRoomId ? this.onlinePlayers.getTelemetryList() : [],
     });
   }
 
@@ -3199,6 +3260,7 @@ export class GameEngine {
 
     this.playerCarRig?.dispose();
     this.trafficAI.dispose();
+    this.onlinePlayers.dispose();
     this.atmosphere.dispose();
     this.world.dispose();
     this.textures.dispose();

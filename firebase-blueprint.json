@@ -188,6 +188,190 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "OnlineRoom": {
+      "title": "OnlineRoom",
+      "description": "Real-time multiplayer session room metadata hosted by a Google-authenticated player.",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostDisplayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "hostPhotoURL": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "isPublic": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "active", "closed"]
+        },
+        "regionId": {
+          "type": "string",
+          "enum": ["sunset_coast", "palm_canyon", "alpine_pass", "fujimi_bay"]
+        },
+        "weather": {
+          "type": "string",
+          "enum": ["sunny", "cloudy", "rain", "heavy_rain", "thunderstorm", "fog"]
+        },
+        "timeOfDay": {
+          "type": "string",
+          "enum": ["sunrise", "day", "sunset", "night"]
+        },
+        "maxPlayers": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "roomId",
+        "name",
+        "hostUid",
+        "hostDisplayName",
+        "hostPhotoURL",
+        "isPublic",
+        "status",
+        "regionId",
+        "weather",
+        "timeOfDay",
+        "maxPlayers",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OnlineRoomPlayer": {
+      "title": "OnlineRoomPlayer",
+      "description": "Live multiplayer vehicle telemetry and Google account identity inside an online room.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "googleDisplayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "googlePhotoURL": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "driverName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 18
+        },
+        "rank": {
+          "type": "string",
+          "enum": ["rookie", "street", "pro", "elite", "legend"]
+        },
+        "carId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "paintColor": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "paintFinish": {
+          "type": "string",
+          "enum": ["gloss", "metallic", "matte"]
+        },
+        "spoiler": {
+          "type": "string",
+          "enum": ["none", "lip", "gt_wing", "swan_neck"]
+        },
+        "bodyKit": {
+          "type": "string",
+          "enum": ["stock", "street", "widebody_gt"]
+        },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" },
+        "heading": { "type": "number" },
+        "vx": { "type": "number" },
+        "vz": { "type": "number" },
+        "speedKmh": { "type": "number" },
+        "steerAngle": { "type": "number" },
+        "braking": { "type": "boolean" },
+        "nitroActive": { "type": "boolean" },
+        "headlightsOn": { "type": "boolean" },
+        "s": { "type": "number" },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "roomId",
+        "googleDisplayName",
+        "googlePhotoURL",
+        "driverName",
+        "rank",
+        "carId",
+        "paintColor",
+        "paintFinish",
+        "spoiler",
+        "bodyKit",
+        "x",
+        "y",
+        "z",
+        "heading",
+        "vx",
+        "vz",
+        "speedKmh",
+        "steerAngle",
+        "braking",
+        "nitroActive",
+        "headlightsOn",
+        "s",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -202,6 +386,18 @@
         "$ref": "#/entities/PlayerCareerSave"
       },
       "description": "Player cloud save document ('career'), strictly readable and writable only by the verified owner."
+    },
+    "/online_rooms/{roomId}": {
+      "schema": {
+        "$ref": "#/entities/OnlineRoom"
+      },
+      "description": "Public or invite-code multiplayer session rooms hosted by verified Google users."
+    },
+    "/online_rooms/{roomId}/players/{playerId}": {
+      "schema": {
+        "$ref": "#/entities/OnlineRoomPlayer"
+      },
+      "description": "Live vehicle telemetry and public Google profile identity for each player inside an online room."
     }
   }
 }

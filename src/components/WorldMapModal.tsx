@@ -31,6 +31,13 @@ interface WorldMapModalProps {
   playerX: number;
   playerZ: number;
   playerHeading: number;
+  onlinePlayers?: Array<{
+    uid: string;
+    googleDisplayName: string;
+    x: number;
+    z: number;
+    heading: number;
+  }>;
   onClose: () => void;
   onFastTravel: (x: number, z: number) => void;
   onLaunchEvent: (evt: RaceEvent) => void;
@@ -58,6 +65,7 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
   playerX,
   playerZ,
   playerHeading,
+  onlinePlayers = [],
   onClose,
   onFastTravel,
   onLaunchEvent,
@@ -108,6 +116,12 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
           <span className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 bg-rose-500 inline-block" /> EVENTS
           </span>
+          {onlinePlayers.length > 0 && (
+            <span className="flex items-center gap-1 text-emerald-300">
+              <span className="w-2.5 h-2.5 bg-emerald-400 inline-block rounded-full" />{' '}
+              PLAYERS ({onlinePlayers.length})
+            </span>
+          )}
         </div>
       </div>
 
@@ -188,6 +202,31 @@ export const WorldMapModal: React.FC<WorldMapModalProps> = ({
                 </g>
               );
             })}
+
+            {/* Remote Online Players */}
+            {onlinePlayers.map((op) => (
+              <g key={op.uid} transform={`translate(${op.x}, ${op.z})`}>
+                <circle
+                  r={34}
+                  fill="#10b981"
+                  fillOpacity={0.28}
+                  stroke="#34d399"
+                  strokeWidth={5}
+                />
+                <circle r={16} fill="#10b981" stroke="#ffffff" strokeWidth={4} />
+                <text
+                  x={0}
+                  y={-42}
+                  textAnchor="middle"
+                  fill="#a7f3d0"
+                  fontSize="36"
+                  fontWeight="bold"
+                  fontFamily="Chakra Petch, sans-serif"
+                >
+                  {op.googleDisplayName}
+                </text>
+              </g>
+            ))}
 
             {/* Player Arrow */}
             <g

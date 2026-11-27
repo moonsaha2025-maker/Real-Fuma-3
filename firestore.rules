@@ -24,10 +24,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isVerifiedOwner(userId) {
-      return isSignedIn()
-        && request.auth.uid == userId
-        && request.auth.token.email_verified == true;
+      return isVerifiedUser() && request.auth.uid == userId;
     }
 
     function isRecentServerTime(ts) {
@@ -148,6 +150,170 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidOnlineRoom(data, roomId) {
+      return data.keys().hasAll([
+          'roomId',
+          'name',
+          'hostUid',
+          'hostDisplayName',
+          'hostPhotoURL',
+          'isPublic',
+          'status',
+          'regionId',
+          'weather',
+          'timeOfDay',
+          'maxPlayers',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'roomId',
+          'name',
+          'hostUid',
+          'hostDisplayName',
+          'hostPhotoURL',
+          'isPublic',
+          'status',
+          'regionId',
+          'weather',
+          'timeOfDay',
+          'maxPlayers',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.roomId is string
+        && data.roomId.size() >= 4
+        && data.roomId.size() <= 24
+        && isValidId(data.roomId)
+        && data.roomId == roomId
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 40
+        && data.hostUid is string
+        && isValidId(data.hostUid)
+        && data.hostDisplayName is string
+        && data.hostDisplayName.size() >= 1
+        && data.hostDisplayName.size() <= 80
+        && data.hostPhotoURL is string
+        && data.hostPhotoURL.size() <= 512
+        && data.isPublic is bool
+        && data.status is string
+        && data.status in ['open', 'active', 'closed']
+        && data.regionId is string
+        && data.regionId in ['sunset_coast', 'palm_canyon', 'alpine_pass', 'fujimi_bay']
+        && data.weather is string
+        && data.weather in ['sunny', 'cloudy', 'rain', 'heavy_rain', 'thunderstorm', 'fog']
+        && data.timeOfDay is string
+        && data.timeOfDay in ['sunrise', 'day', 'sunset', 'night']
+        && data.maxPlayers is number
+        && data.maxPlayers >= 2
+        && data.maxPlayers <= 12
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOnlinePlayer(data, roomId, playerId) {
+      return data.keys().hasAll([
+          'uid',
+          'roomId',
+          'googleDisplayName',
+          'googlePhotoURL',
+          'driverName',
+          'rank',
+          'carId',
+          'paintColor',
+          'paintFinish',
+          'spoiler',
+          'bodyKit',
+          'x',
+          'y',
+          'z',
+          'heading',
+          'vx',
+          'vz',
+          'speedKmh',
+          'steerAngle',
+          'braking',
+          'nitroActive',
+          'headlightsOn',
+          's',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'roomId',
+          'googleDisplayName',
+          'googlePhotoURL',
+          'driverName',
+          'rank',
+          'carId',
+          'paintColor',
+          'paintFinish',
+          'spoiler',
+          'bodyKit',
+          'x',
+          'y',
+          'z',
+          'heading',
+          'vx',
+          'vz',
+          'speedKmh',
+          'steerAngle',
+          'braking',
+          'nitroActive',
+          'headlightsOn',
+          's',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == playerId
+        && data.uid == request.auth.uid
+        && data.roomId is string
+        && data.roomId.size() >= 4
+        && data.roomId.size() <= 24
+        && isValidId(data.roomId)
+        && data.roomId == roomId
+        && data.googleDisplayName is string
+        && data.googleDisplayName.size() >= 1
+        && data.googleDisplayName.size() <= 80
+        && data.googlePhotoURL is string
+        && data.googlePhotoURL.size() <= 512
+        && data.driverName is string
+        && data.driverName.size() >= 1
+        && data.driverName.size() <= 18
+        && data.rank is string
+        && data.rank in ['rookie', 'street', 'pro', 'elite', 'legend']
+        && data.carId is string
+        && data.carId.size() >= 1
+        && data.carId.size() <= 64
+        && data.paintColor is string
+        && data.paintColor.size() >= 4
+        && data.paintColor.size() <= 16
+        && data.paintFinish is string
+        && data.paintFinish in ['gloss', 'metallic', 'matte']
+        && data.spoiler is string
+        && data.spoiler in ['none', 'lip', 'gt_wing', 'swan_neck']
+        && data.bodyKit is string
+        && data.bodyKit in ['stock', 'street', 'widebody_gt']
+        && data.x is number && data.x >= -5000 && data.x <= 5000
+        && data.y is number && data.y >= -500 && data.y <= 2000
+        && data.z is number && data.z >= -5000 && data.z <= 5000
+        && data.heading is number && data.heading >= -100 && data.heading <= 100
+        && data.vx is number && data.vx >= -300 && data.vx <= 300
+        && data.vz is number && data.vz >= -300 && data.vz <= 300
+        && data.speedKmh is number && data.speedKmh >= 0 && data.speedKmh <= 600
+        && data.steerAngle is number && data.steerAngle >= -2 && data.steerAngle <= 2
+        && data.braking is bool
+        && data.nitroActive is bool
+        && data.headlightsOn is bool
+        && data.s is number && data.s >= 0 && data.s <= 1
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // Isolated Private Google Account PII
     match /users/{userId}/private/{docId} {
       allow get: if isValidId(userId)
@@ -232,6 +398,114 @@ service cloud.firestore {
       allow delete: if isValidId(userId)
         && saveId == 'career'
         && isVerifiedOwner(userId);
+    }
+
+    // Online Multiplayer Rooms (Verified Google Auth required)
+    match /online_rooms/{roomId} {
+      allow get: if isValidId(roomId)
+        && roomId.size() >= 4
+        && roomId.size() <= 24
+        && isVerifiedUser();
+
+      allow list: if isVerifiedUser()
+        && resource.data.isPublic == true
+        && resource.data.status in ['open', 'active'];
+
+      allow create: if isValidId(roomId)
+        && isVerifiedUser()
+        && isValidOnlineRoom(incoming(), roomId)
+        && incoming().hostUid == request.auth.uid
+        && incoming().status == 'open'
+        && isRecentServerTime(incoming().createdAt)
+        && isRecentServerTime(incoming().updatedAt);
+
+      allow update: if isValidId(roomId)
+        && isVerifiedUser()
+        && isValidOnlineRoom(incoming(), roomId)
+        && existing().hostUid == request.auth.uid
+        && existing().status != 'closed'
+        && incoming().roomId == existing().roomId
+        && incoming().hostUid == existing().hostUid
+        && incoming().createdAt == existing().createdAt
+        && isRecentServerTime(incoming().updatedAt)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name',
+          'hostDisplayName',
+          'hostPhotoURL',
+          'isPublic',
+          'status',
+          'regionId',
+          'weather',
+          'timeOfDay',
+          'updatedAt'
+        ]);
+
+      allow delete: if isValidId(roomId)
+        && isVerifiedUser()
+        && existing().hostUid == request.auth.uid;
+
+      // Live Player Vehicle State & Public Google Identity inside a Room
+      match /players/{playerId} {
+        allow get: if isValidId(roomId)
+          && isValidId(playerId)
+          && isVerifiedUser()
+          && exists(/databases/$(database)/documents/online_rooms/$(roomId));
+
+        allow list: if isValidId(roomId)
+          && isVerifiedUser()
+          && resource.data.roomId == roomId;
+
+        allow create: if isValidId(roomId)
+          && isValidId(playerId)
+          && isVerifiedUser()
+          && playerId == request.auth.uid
+          && isValidOnlinePlayer(incoming(), roomId, playerId)
+          && isRecentServerTime(incoming().createdAt)
+          && isRecentServerTime(incoming().updatedAt)
+          && get(/databases/$(database)/documents/online_rooms/$(roomId)).data.status != 'closed';
+
+        allow update: if isValidId(roomId)
+          && isValidId(playerId)
+          && isVerifiedUser()
+          && playerId == request.auth.uid
+          && isValidOnlinePlayer(incoming(), roomId, playerId)
+          && incoming().uid == existing().uid
+          && incoming().roomId == existing().roomId
+          && incoming().createdAt == existing().createdAt
+          && isRecentServerTime(incoming().updatedAt)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'googleDisplayName',
+            'googlePhotoURL',
+            'driverName',
+            'rank',
+            'carId',
+            'paintColor',
+            'paintFinish',
+            'spoiler',
+            'bodyKit',
+            'x',
+            'y',
+            'z',
+            'heading',
+            'vx',
+            'vz',
+            'speedKmh',
+            'steerAngle',
+            'braking',
+            'nitroActive',
+            'headlightsOn',
+            's',
+            'updatedAt'
+          ]);
+
+        allow delete: if isValidId(roomId)
+          && isValidId(playerId)
+          && isVerifiedUser()
+          && (
+            playerId == request.auth.uid
+            || get(/databases/$(database)/documents/online_rooms/$(roomId)).data.hostUid == request.auth.uid
+          );
+      }
     }
   }
 }

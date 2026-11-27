@@ -57,6 +57,7 @@ export type ScreenState =
   | 'onboarding'
   | 'main_menu'
   | 'playing'
+  | 'online'
   | 'garage'
   | 'dealership'
   | 'customization'
@@ -321,6 +322,63 @@ export interface LiveTelemetry {
   noBrakeDriftSec: number;
   opponents: Array<{ x: number; z: number; name: string }>;
   trafficPositions: Array<{ x: number; z: number }>;
+  onlineMode?: boolean;
+  onlineRoomId?: string | null;
+  onlineRoomName?: string | null;
+  onlinePlayers?: Array<{
+    uid: string;
+    googleDisplayName: string;
+    googlePhotoURL: string;
+    driverName: string;
+    carName: string;
+    x: number;
+    z: number;
+    heading: number;
+    speedKmh: number;
+  }>;
+}
+
+export interface OnlineRoom {
+  roomId: string;
+  name: string;
+  hostUid: string;
+  hostDisplayName: string;
+  hostPhotoURL: string;
+  isPublic: boolean;
+  status: 'open' | 'active' | 'closed';
+  regionId: RegionId;
+  weather: WeatherType;
+  timeOfDay: TimeOfDay;
+  maxPlayers: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface OnlinePlayerState {
+  uid: string;
+  roomId: string;
+  googleDisplayName: string;
+  googlePhotoURL: string;
+  driverName: string;
+  rank: CareerRankId;
+  carId: string;
+  paintColor: string;
+  paintFinish: PaintFinish;
+  spoiler: CarCustomization['spoiler'];
+  bodyKit: CarCustomization['bodyKit'];
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  vx: number;
+  vz: number;
+  speedKmh: number;
+  steerAngle: number;
+  braking: boolean;
+  nitroActive: boolean;
+  headlightsOn: boolean;
+  s: number;
+  updatedAtMs: number;
 }
 
 export interface ControlInputState {
