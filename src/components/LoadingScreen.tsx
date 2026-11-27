@@ -9,6 +9,9 @@ interface LoadingScreenProps {
 }
 
 const LOADING_LOGO_SRC = '/assets/aistudio/Neon_Red_Ghost_Emblem_7ea8b422.png';
+const STUDIO_PHASE_MS = 2650;
+const WARMUP_MS = 6400;
+const TOTAL_LOADING_MS = 7000;
 
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({
   onWarmup,
@@ -18,22 +21,41 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
   onReadyRef.current = onReady;
   const onWarmupRef = useRef(onWarmup);
   onWarmupRef.current = onWarmup;
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const [phase, setPhase] = useState<'studio' | 'logo'>('studio');
   const [imgFailed, setImgFailed] = useState(false);
   const [logoDecoded, setLogoDecoded] = useState(false);
 
   useEffect(() => {
+    const imgEl = imgRef.current;
+    if (imgEl && typeof imgEl.decode === 'function') {
+      imgEl
+        .decode()
+        .then(() => setLogoDecoded(true))
+        .catch(() => setLogoDecoded(true));
+    }
+
+    const logoTimer = window.setTimeout(() => {
+      setPhase('logo');
+    }, STUDIO_PHASE_MS);
+
     const warmupTimer = window.setTimeout(() => {
       onWarmupRef.current?.();
-    }, 6400);
-    const timer = window.setTimeout(() => {
+    }, WARMUP_MS);
+
+    const readyTimer = window.setTimeout(() => {
       onReadyRef.current();
-    }, 7000);
+    }, TOTAL_LOADING_MS);
+
     const decodeSafety = window.setTimeout(() => {
       setLogoDecoded(true);
-    }, 350);
+    }, 1800);
+
     return () => {
+      window.clearTimeout(logoTimer);
       window.clearTimeout(warmupTimer);
-      window.clearTimeout(timer);
+      window.clearTimeout(readyTimer);
       window.clearTimeout(decodeSafety);
     };
   }, []);
@@ -43,15 +65,41 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
       onPointerDown={() => audioEngine.init()}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black px-6 select-none overflow-hidden"
     >
+      {/* Subtle studio / emblem ambient radial glow */}
       <div
         aria-hidden="true"
-        className="real-fuma-loading-aura pointer-events-none absolute w-[28rem] h-[28rem] sm:w-[36rem] sm:h-[36rem] rounded-full bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.28)_0%,rgba(127,29,29,0.08)_44%,transparent_72%)]"
+        className={`pointer-events-none absolute w-[28rem] h-[28rem] sm:w-[36rem] sm:h-[36rem] rounded-full transition-opacity duration-500 ${
+          phase === 'logo'
+            ? 'real-fuma-loading-aura bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.28)_0%,rgba(127,29,29,0.08)_44%,transparent_72%)]'
+            : 'opacity-40 bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.14)_0%,rgba(15,17,22,0.05)_50%,transparent_74%)]'
+        }`}
       />
+
+      {/* Phase 1: Snikko Games studio title */}
+      {phase === 'studio' && (
+        <div className="relative flex flex-col items-center justify-center text-center">
+          <h1 className="snikko-studio-title font-display font-bold text-3xl sm:text-5xl md:text-6xl tracking-[0.14em] text-slate-50 whitespace-nowrap">
+            Snikko <span className="text-red-500">Games</span>
+          </h1>
+          <div
+            aria-hidden="true"
+            className="snikko-studio-line mt-4 h-px w-28 sm:w-40 bg-gradient-to-r from-transparent via-red-500/85 to-transparent"
+          />
+        </div>
+      )}
+
+      {/* Phase 2: Neon emblem logo (preloaded silently during Phase 1) */}
       <div
-        className={`${logoDecoded ? 'real-fuma-loading-logo' : 'opacity-0'} relative flex items-center justify-center`}
+        aria-hidden={phase !== 'logo'}
+        className={`flex items-center justify-center ${
+          phase === 'logo' && logoDecoded
+            ? 'relative real-fuma-loading-logo'
+            : 'pointer-events-none absolute inset-0 opacity-0'
+        }`}
       >
         {!imgFailed ? (
           <img
+            ref={imgRef}
             src={LOADING_LOGO_SRC}
             alt="Real Fuma Racing emblem"
             referrerPolicy="no-referrer"
@@ -76,4 +124,3 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
     </div>
   );
 };
-

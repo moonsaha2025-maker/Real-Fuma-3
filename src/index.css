@@ -76,16 +76,54 @@
   touch-action: none;
 }
 
+@keyframes snikkoTitleIntro {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale3d(0.96, 0.96, 1);
+  }
+  16% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+  }
+  78% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale3d(1.025, 1.025, 1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale3d(1.045, 1.045, 1);
+  }
+}
+
+@keyframes snikkoLineSweep {
+  0% {
+    opacity: 0;
+    transform: scaleX(0.15);
+  }
+  20% {
+    opacity: 0.95;
+    transform: scaleX(1);
+  }
+  78% {
+    opacity: 0.95;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(0.6);
+  }
+}
+
 @keyframes realFumaLogoIntro {
   0% {
     opacity: 0;
     transform: translate3d(0, 0, 0) scale3d(0.92, 0.92, 1);
   }
-  12% {
+  15% {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
   }
-  90% {
+  86% {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale3d(1.035, 1.035, 1);
   }
@@ -107,8 +145,20 @@
   }
 }
 
+.snikko-studio-title {
+  animation: snikkoTitleIntro 2.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.snikko-studio-line {
+  animation: snikkoLineSweep 2.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
 .real-fuma-loading-logo {
-  animation: realFumaLogoIntro 7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: realFumaLogoIntro 4.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -120,6 +170,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .snikko-studio-title,
+  .snikko-studio-line,
   .real-fuma-loading-logo,
   .real-fuma-loading-aura {
     animation: none;

@@ -12,17 +12,35 @@ import {
   getDoc,
   getDocFromServer,
   getFirestore,
+  initializeFirestore,
   serverTimestamp,
   setDoc,
   updateDoc,
   type FieldValue,
+  type Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { RANK_ORDER } from '../data/cars';
 import type { PlayerSaveData } from '../types/game';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+function createFirestoreClient(): Firestore {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+        ignoreUndefinedProperties: true,
+      },
+      firebaseConfig.firestoreDatabaseId,
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = createFirestoreClient();
 export const auth = getAuth(app);
 
 const googleProvider = new GoogleAuthProvider();
@@ -81,18 +99,31 @@ export function handleFirestoreError(
 }
 
 async function testConnection(): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes('the client is offline')
+      (error.message.includes('the client is offline') ||
+        error.message.includes('unavailable'))
     ) {
-      console.error('Please check your Firebase configuration.');
+      console.warn('Firestore connection check deferred (offline or unavailable).');
     }
   }
 }
-void testConnection();
+
+if (typeof window !== 'undefined') {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    window.addEventListener('online', () => {
+      void testConnection();
+    }, { once: true });
+  } else {
+    void testConnection();
+  }
+}
 
 const inFlightAccountSync = new Map<string, Promise<void>>();
 

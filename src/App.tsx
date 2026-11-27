@@ -226,7 +226,9 @@ export default function App() {
           return { restoredExisting: false };
         } catch (err) {
           console.error('Cloud hydrate error:', err);
-          cloudHydratedUidRef.current = user.uid;
+          if (cloudHydratedUidRef.current === user.uid) {
+            cloudHydratedUidRef.current = null;
+          }
           setCloudSyncState('error');
           return { restoredExisting: false };
         } finally {
@@ -256,6 +258,22 @@ export default function App() {
     });
     return () => unsub();
   }, [hydrateAccountFromCloud]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    const handleOnline = () => {
+      if (cloudHydratedUidRef.current !== authUser.uid) {
+        void hydrateAccountFromCloud(authUser, false);
+      } else if (latestSaveRef.current.onboarded) {
+        setCloudSyncState('syncing');
+        saveCloudCareerSave(authUser.uid, latestSaveRef.current)
+          .then(() => setCloudSyncState('synced'))
+          .catch(() => setCloudSyncState('error'));
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [authUser, hydrateAccountFromCloud]);
 
   useEffect(() => {
     if (!authUser || !save.onboarded) return;
@@ -326,6 +344,18 @@ export default function App() {
     if (!authUser) return;
     setCloudSyncState('syncing');
     try {
+      if (cloudHydratedUidRef.current !== authUser.uid) {
+        const result = await hydrateAccountFromCloud(authUser, false);
+        if (cloudHydratedUidRef.current !== authUser.uid) {
+          setCloudSyncState('error');
+          notify('Cloud sync failed');
+          return;
+        }
+        notify(
+          result.restoredExisting ? 'Cloud Save Restored' : 'Cloud Save Synced',
+        );
+        return;
+      }
       await saveCloudCareerSave(authUser.uid, latestSaveRef.current);
       setCloudSyncState('synced');
       notify('Cloud Save Synced');
@@ -333,7 +363,7 @@ export default function App() {
       setCloudSyncState('error');
       notify('Cloud sync failed');
     }
-  }, [authUser, notify]);
+  }, [authUser, hydrateAccountFromCloud, notify]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
