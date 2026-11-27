@@ -565,7 +565,7 @@ export default function App() {
       engineRef.current?.setPhotoMode(false);
       engineRef.current?.setPlayerCar(activeCarData);
       if (weather && time) {
-        engineRef.current?.setAtmosphere(weather, time);
+        engineRef.current?.setAtmosphere(weather, time, true);
       }
       engineRef.current?.startFreeRoam(spawnX, spawnZ);
       setScreen('playing');

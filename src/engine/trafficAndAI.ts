@@ -688,6 +688,18 @@ export class TrafficAndAIManager {
     return out.length;
   }
 
+  public syncLights(headlightsOn: boolean): void {
+    for (let i = 0; i < this.traffic.length; i++) {
+      const t = this.traffic[i];
+      if (t.carRig.root.visible) {
+        t.carRig.setLights(headlightsOn, false, false);
+      }
+    }
+    for (let i = 0; i < this.racers.length; i++) {
+      this.racers[i].carRig.setLights(headlightsOn, false, false);
+    }
+  }
+
   public dispose(): void {
     this.clearRacers();
     for (const t of this.traffic) {

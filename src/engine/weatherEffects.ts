@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { CarBaseSpec, ControlInputState, WeatherType } from '../types/game';
 import { VehiclePhysicsState } from './physics';
+import { WindFieldState } from './wind';
 
 const RAIN_COUNT = 2200;
 const SPLASH_COUNT = 220;
 const SPRAY_COUNT = 280;
 const FOG_BANK_COUNT = 84;
+const WIND_LEAF_COUNT = 220;
 
 const _carFwd = new THREE.Vector3();
 const _carRight = new THREE.Vector3();
@@ -26,6 +28,7 @@ export interface WeatherUpdateContext {
   pixelHeight: number;
   isCockpit: boolean;
   isFirstPerson: boolean;
+  wind?: WindFieldState;
 }
 
 export class WeatherEffectsSystem {
@@ -93,6 +96,16 @@ export class WeatherEffectsSystem {
   private readonly beamMat: THREE.ShaderMaterial;
   private readonly beamMeshL: THREE.Mesh;
   private readonly beamMeshR: THREE.Mesh;
+
+  // 7. Wind-Blown Airborne Leaves, Petals & Coastal Dust Motes
+  private readonly leafGeo: THREE.BufferGeometry;
+  private readonly leafMat: THREE.ShaderMaterial;
+  private readonly leafPoints: THREE.Points;
+  private readonly leafPos = new Float32Array(WIND_LEAF_COUNT * 3);
+  private readonly leafOffsets = new Float32Array(WIND_LEAF_COUNT * 3);
+  private readonly leafPhase = new Float32Array(WIND_LEAF_COUNT);
+  private readonly leafSize = new Float32Array(WIND_LEAF_COUNT);
+  private readonly leafKind = new Float32Array(WIND_LEAF_COUNT); // 0=green leaf, 1=amber leaf, 2=pink petal, 3=dust mote
 
   constructor(initialViewportHeightPx = 720) {
     const pxH = Math.max(240, initialViewportHeightPx);
@@ -497,6 +510,88 @@ export class WeatherEffectsSystem {
     this.beamGroup.add(this.beamMeshL, this.beamMeshR);
     this.beamGroup.visible = false;
     this.group.add(this.beamGroup);
+
+    // --- 7. Airborne Wind-Blown Leaves, Blossoms & Coastal Dust ---
+    for (let i = 0; i < WIND_LEAF_COUNT; i++) {
+      this.leafOffsets[i * 3] = (Math.random() - 0.5) * 62;
+      this.leafOffsets[i * 3 + 1] = 0.25 + Math.random() * 11.5;
+      this.leafOffsets[i * 3 + 2] = (Math.random() - 0.5) * 62;
+      this.leafPhase[i] = Math.random() * 6.283;
+      this.leafSize[i] = 0.28 + Math.random() * 0.34;
+      const r = Math.random();
+      this.leafKind[i] = r < 0.45 ? 0 : r < 0.72 ? 1 : r < 0.86 ? 2 : 3;
+    }
+    this.leafGeo = new THREE.BufferGeometry();
+    this.leafGeo.setAttribute('position', new THREE.BufferAttribute(this.leafPos, 3));
+    this.leafGeo.setAttribute('aPhase', new THREE.BufferAttribute(this.leafPhase, 1));
+    this.leafGeo.setAttribute('aSize', new THREE.BufferAttribute(this.leafSize, 1));
+    this.leafGeo.setAttribute('aKind', new THREE.BufferAttribute(this.leafKind, 1));
+
+    this.leafMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+      uniforms: {
+        uPixelHeight: { value: pxH },
+        uTime: { value: 0 },
+        uOpacity: { value: 0.7 },
+        uLightMult: { value: 1.0 },
+      },
+      vertexShader: `
+        attribute float aPhase;
+        attribute float aSize;
+        attribute float aKind;
+        varying float vPhase;
+        varying float vKind;
+        varying float vFade;
+        uniform float uPixelHeight;
+        uniform float uTime;
+
+        void main() {
+          vPhase = aPhase + uTime * (3.2 + mod(aPhase, 2.0));
+          vKind = aKind;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float camDist = max(1.0, -mv.z);
+          vFade = smoothstep(2.0, 5.5, camDist) * (1.0 - smoothstep(22.0, 34.0, camDist));
+          gl_PointSize = clamp((aSize * uPixelHeight * 0.48) / camDist, 1.5, 22.0);
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        varying float vPhase;
+        varying float vKind;
+        varying float vFade;
+        uniform float uOpacity;
+        uniform float uLightMult;
+
+        void main() {
+          if (vFade <= 0.01 || uOpacity <= 0.01) discard;
+          vec2 c = gl_PointCoord - 0.5;
+          float co = cos(vPhase);
+          float si = sin(vPhase);
+          vec2 p = vec2(co * c.x - si * c.y, si * c.x + co * c.y) * 2.0;
+          // Tapered curved leaf silhouette
+          p.y *= 1.65;
+          float d = length(p);
+          if (d >= 1.0) discard;
+          float body = smoothstep(1.0, 0.28, d);
+          vec3 col = vKind < 0.5
+            ? vec3(0.32, 0.54, 0.20)
+            : vKind < 1.5
+              ? vec3(0.62, 0.46, 0.18)
+              : vKind < 2.5
+                ? vec3(0.95, 0.72, 0.80)
+                : vec3(0.84, 0.82, 0.75);
+          float alpha = body * vFade * uOpacity * (vKind > 2.5 ? 0.55 : 0.9);
+          gl_FragColor = vec4(col * uLightMult, alpha);
+        }
+      `,
+    });
+
+    this.leafPoints = new THREE.Points(this.leafGeo, this.leafMat);
+    this.leafPoints.frustumCulled = false;
+    this.leafPoints.renderOrder = 8;
+    this.group.add(this.leafPoints);
   }
 
   public setViewportHeight(pixelHeight: number): void {
@@ -504,6 +599,7 @@ export class WeatherEffectsSystem {
     this.splashMat.uniforms.uPixelHeight.value = h;
     this.sprayMat.uniforms.uPixelHeight.value = h;
     this.fogMat.uniforms.uPixelHeight.value = h;
+    this.leafMat.uniforms.uPixelHeight.value = h;
   }
 
   public triggerLightningBolt(
@@ -656,9 +752,11 @@ export class WeatherEffectsSystem {
           : Math.floor(RAIN_COUNT * 0.48);
       this.rainGeo.setDrawRange(0, activeDrops * 2);
 
-      // Wind gust crossflow + car apparent velocity makes streaks slant dynamically!
-      const gustX = Math.sin(elapsedTime * 0.85) * (isStorm ? 7.5 : 3.2) - 2.4;
-      const gustZ = Math.cos(elapsedTime * 0.65) * (isStorm ? 5.2 : 2.1);
+      // Unified coastal WindFieldState crossflow + local gusts make rain streaks slant dynamically!
+      const windX = ctx.wind ? ctx.wind.dirX * ctx.wind.speedMs * 0.48 : -2.4;
+      const windZ = ctx.wind ? ctx.wind.dirZ * ctx.wind.speedMs * 0.48 : 0.8;
+      const gustX = windX + Math.sin(elapsedTime * 0.95) * (isStorm ? 4.2 : 1.8);
+      const gustZ = windZ + Math.cos(elapsedTime * 0.72) * (isStorm ? 3.1 : 1.4);
       const streakDur = isStorm ? 0.042 : isHeavyRain ? 0.036 : 0.028;
 
       const relStreakX = (gustX - physics.vx * 0.55) * streakDur;
@@ -844,13 +942,18 @@ export class WeatherEffectsSystem {
     if (fogBankStrength > 0.015) {
       this.fogPoints.visible = true;
       this.fogMat.uniforms.uTime.value = elapsedTime;
-      const driftSpd = isStorm ? 4.2 : isFog ? 1.55 : 2.2;
+      const wDirX = ctx.wind ? ctx.wind.dirX : 0.85;
+      const wDirZ = ctx.wind ? ctx.wind.dirZ : 0.45;
+      const driftSpd = ctx.wind ? Math.max(1.2, ctx.wind.speedMs * 0.28) : (isStorm ? 4.2 : isFog ? 1.55 : 2.2);
       for (let i = 0; i < FOG_BANK_COUNT; i++) {
         const i3 = i * 3;
-        this.fogOffset[i3] += driftSpd * dt * (i % 2 === 0 ? 1 : 0.7);
-        this.fogOffset[i3 + 2] += driftSpd * 0.45 * dt;
+        const par = i % 2 === 0 ? 1.0 : 0.72;
+        this.fogOffset[i3] += wDirX * driftSpd * par * dt;
+        this.fogOffset[i3 + 2] += wDirZ * driftSpd * par * dt;
         if (this.fogOffset[i3] > 165) this.fogOffset[i3] -= 330;
+        else if (this.fogOffset[i3] < -165) this.fogOffset[i3] += 330;
         if (this.fogOffset[i3 + 2] > 165) this.fogOffset[i3 + 2] -= 330;
+        else if (this.fogOffset[i3 + 2] < -165) this.fogOffset[i3 + 2] += 330;
 
         this.fogPos[i3] = physics.x + this.fogOffset[i3];
         this.fogPos[i3 + 1] = physics.y + this.fogOffset[i3 + 1];
@@ -871,6 +974,43 @@ export class WeatherEffectsSystem {
     } else {
       this.fogPoints.visible = false;
     }
+
+    // 4b. Wind-Blown Leaves, Blossoms & Coastal Dust Motes
+    const wSpd = ctx.wind ? ctx.wind.speedMs : 6.5;
+    const wDx = ctx.wind ? ctx.wind.dirX : 0.78;
+    const wDz = ctx.wind ? ctx.wind.dirZ : 0.625;
+    const leafActiveCount = Math.min(
+      WIND_LEAF_COUNT,
+      Math.round(58 + (wSpd / 28) * (WIND_LEAF_COUNT - 58)),
+    );
+    this.leafGeo.setDrawRange(0, leafActiveCount);
+    for (let i = 0; i < leafActiveCount; i++) {
+      const i3 = i * 3;
+      const ph = this.leafPhase[i];
+      const flutter = Math.sin(elapsedTime * 3.1 + ph) * 1.15;
+      const rise = Math.cos(elapsedTime * 2.2 + ph * 1.4) * 0.85 - 0.12;
+      const swirlX = wDx * wSpd * 0.62 + flutter * -wDz;
+      const swirlZ = wDz * wSpd * 0.62 + flutter * wDx;
+
+      this.leafOffsets[i3] += swirlX * dt;
+      this.leafOffsets[i3 + 1] += rise * dt;
+      this.leafOffsets[i3 + 2] += swirlZ * dt;
+
+      if (this.leafOffsets[i3] > 31) this.leafOffsets[i3] -= 62;
+      else if (this.leafOffsets[i3] < -31) this.leafOffsets[i3] += 62;
+      if (this.leafOffsets[i3 + 2] > 31) this.leafOffsets[i3 + 2] -= 62;
+      else if (this.leafOffsets[i3 + 2] < -31) this.leafOffsets[i3 + 2] += 62;
+      if (this.leafOffsets[i3 + 1] < 0.2) this.leafOffsets[i3 + 1] = 10.5;
+      else if (this.leafOffsets[i3 + 1] > 12.0) this.leafOffsets[i3 + 1] = 0.4;
+
+      this.leafPos[i3] = physics.x + this.leafOffsets[i3];
+      this.leafPos[i3 + 1] = physics.y + this.leafOffsets[i3 + 1];
+      this.leafPos[i3 + 2] = physics.z + this.leafOffsets[i3 + 2];
+    }
+    this.leafGeo.attributes.position.needsUpdate = true;
+    this.leafMat.uniforms.uTime.value = elapsedTime;
+    this.leafMat.uniforms.uOpacity.value = THREE.MathUtils.clamp(0.28 + (wSpd / 28) * 0.55, 0.25, 0.85);
+    this.leafMat.uniforms.uLightMult.value = 0.34 + daylightFactor * 0.72 + lightningFlash * 0.4;
 
     // 5. 3D Forked Lightning Bolt Decay
     if (this.boltFade > 0) {
@@ -939,5 +1079,7 @@ export class WeatherEffectsSystem {
     this.boltMat.dispose();
     this.beamGeo.dispose();
     this.beamMat.dispose();
+    this.leafGeo.dispose();
+    this.leafMat.dispose();
   }
 }

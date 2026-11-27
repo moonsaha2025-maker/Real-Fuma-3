@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import { getEffectiveCarStats } from '../data/cars';
 import {
+  getDriveSurfaceHeight,
   getRoadPointAt,
   getSurfaceAt,
+  getTerrainHeight,
+  hasSolidBarrierAt,
   projectOntoTrack,
+  SEA_LEVEL_Y,
 } from '../data/track';
 import {
   CarBaseSpec,
@@ -139,6 +143,9 @@ export function stepVehiclePhysics(
     abs: boolean;
     tractionControl: boolean;
     manualShiftRequest: -1 | 0 | 1;
+    windDirX?: number;
+    windDirZ?: number;
+    windSpeedMs?: number;
   },
 ): void {
   const dt = Math.min(options.dt, 0.05);
@@ -429,18 +436,37 @@ export function stepVehiclePhysics(
   state.vx = newSin * nextForward + newCos * nextLateral;
   state.vz = newCos * nextForward - newSin * nextLateral;
 
+  // Subtle high-speed aerodynamic crosswind drift feel during stormy gusts
+  const windSpd = options.windSpeedMs ?? 0;
+  if (windSpd > 8 && speedMsTotal > 26 && state.grounded) {
+    const wDx = options.windDirX ?? 0;
+    const wDz = options.windDirZ ?? 0;
+    const latWind = wDx * newCos - wDz * newSin;
+    const windRatio = Math.min(1, (windSpd - 8) / 22);
+    const aeroLatKick = latWind * windRatio * Math.min(1, speedMsTotal / 70) * 1.45;
+    state.vx += newCos * aeroLatKick * dt;
+    state.vz -= newSin * aeroLatKick * dt;
+  }
+
   state.x += state.vx * dt;
   state.z += state.vz * dt;
 
-  // Spline-Corridor Containment + Realistic Guardrail Crash & Wall-Scrape Physics
+  // Spline-Corridor Containment: Solid Steel Guardrails on bridges/tunnels/alpine/sharp bends,
+  // Open Driveable Coastal Beaches & Countryside Meadows elsewhere!
   const proj = projectOntoTrack(state.x, state.z, state.stationIdx);
   state.stationIdx = proj.stationIdx;
   state.trackProgress = proj.station.s;
 
+  const side: -1 | 1 = proj.lateralOffset >= 0 ? 1 : -1;
+  const solidBarrier = hasSolidBarrierAt(proj.station, side);
+  const absLat = Math.abs(proj.lateralOffset);
   const guardLimit = proj.station.roadWidth * 0.5 - 0.88;
-  if (Math.abs(proj.lateralOffset) > guardLimit) {
-    const side = Math.sign(proj.lateralOffset);
-    const excess = Math.abs(proj.lateralOffset) - guardLimit;
+  const openOuterLimit =
+    proj.station.roadWidth * 0.5 +
+    (proj.station.zoneId === 'sunset_coast' && side === -1 ? 23.5 : 27.5);
+
+  if (solidBarrier && absLat > guardLimit) {
+    const excess = absLat - guardLimit;
     const nx = proj.station.rx * side; // Outward normal toward barrier
     const nz = proj.station.rz * side;
 
@@ -463,12 +489,10 @@ export function stepVehiclePhysics(
 
     if (vOutward > 0) {
       const impact = Math.min(1.25, vOutward / 22);
-      // Heavy impacts bounce with realistic restitution & absorb crash energy; slight scrapes deflect cleanly
       const restitution = impact > 0.35 ? 0.32 : 0.18;
       state.vx -= (1 + restitution) * vOutward * nx;
       state.vz -= (1 + restitution) * vOutward * nz;
 
-      // Friction scrub proportional to wall-normal force
       const scrub = THREE.MathUtils.clamp(1 - impact * 0.22, 0.56, 0.97);
       state.vx *= scrub;
       state.vz *= scrub;
@@ -483,7 +507,6 @@ export function stepVehiclePhysics(
         state.lastCollisionKind = 'rail';
         state.damageLevel = Math.min(1, state.damageLevel + impact * 0.16);
 
-        // Controlled yaw kick & suspension slam on barrier impact (never spins driver uncontrollably backwards)
         const crossSign = newSin * nz - newCos * nx;
         state.angularVel += crossSign * impact * (2.1 / massFactor);
         state.heaveVel -= Math.min(1.3, impact * 0.95);
@@ -492,7 +515,6 @@ export function stepVehiclePhysics(
       }
     }
 
-    // Continuous wall grinding friction + spark stream when sliding along guardrail
     if (totalSpeed > 5.5 && Math.abs(vTangential) > 4.0) {
       const scrape = THREE.MathUtils.clamp(totalSpeed / 48, 0.12, 1.0);
       state.railScrapeIntensity = Math.max(state.railScrapeIntensity, scrape);
@@ -513,14 +535,48 @@ export function stepVehiclePhysics(
     if (Math.abs(hDiff) < 0.78) {
       state.heading += hDiff * Math.min(1, dt * 3.8);
     }
+  } else if (!solidBarrier && absLat > proj.station.roadWidth * 0.5) {
+    const nx = proj.station.rx * side;
+    const nz = proj.station.rz * side;
+    if (absLat > openOuterLimit) {
+      const excess = absLat - openOuterLimit;
+      state.x -= nx * excess;
+      state.z -= nz * excess;
+      const vOutward = state.vx * nx + state.vz * nz;
+      if (vOutward > 0) {
+        state.vx -= 1.2 * vOutward * nx;
+        state.vz -= 1.2 * vOutward * nz;
+      }
+    } else {
+      // Soft shoreline & steep embankment protection so car doesn't drive underwater or vertically up cliffs
+      const curTerrainY = getTerrainHeight(state.x, state.z);
+      if (curTerrainY < SEA_LEVEL_Y + 0.12) {
+        state.x -= nx * 0.9;
+        state.z -= nz * 0.9;
+        const vOut = state.vx * nx + state.vz * nz;
+        if (vOut > 0) {
+          state.vx -= 1.25 * vOut * nx;
+          state.vz -= 1.25 * vOut * nz;
+        }
+      } else {
+        const aheadTerrainY = getTerrainHeight(state.x + nx * 1.5, state.z + nz * 1.5);
+        if (aheadTerrainY - curTerrainY > 1.25) {
+          const vOut = state.vx * nx + state.vz * nz;
+          if (vOut > 0) {
+            state.vx -= 1.15 * vOut * nx;
+            state.vz -= 1.15 * vOut * nz;
+          }
+        }
+      }
+    }
   }
 
-  // Exact Spline Elevation + Track Banking Alignment
+  // Exact Spline + Graded Terrain Elevation & Banking Alignment
   const finalProj = projectOntoTrack(state.x, state.z, state.stationIdx);
   state.stationIdx = finalProj.stationIdx;
   state.trackProgress = finalProj.station.s;
 
-  const groundY = finalProj.surfaceY;
+  const groundY = getDriveSurfaceHeight(state.x, state.z, state.stationIdx);
   if (state.y > groundY + 0.12) {
     state.vy -= 19.6 * dt;
     state.y += state.vy * dt;

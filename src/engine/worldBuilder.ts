@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   getRoadPointAt,
   getTerrainHeight,
+  hasSolidBarrierAt,
   projectOntoTrack,
   TRACK_LENGTH_M,
   TRACK_STATION_COUNT,
@@ -9,12 +10,75 @@ import {
   WORLD_HALF_SIZE,
 } from '../data/track';
 import { ProceduralTexturePack } from './textures';
+import { WindFieldState } from './wind';
+
+export interface TreeCollider {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height: number;
+  kind: 'palm' | 'pine' | 'jungle' | 'cypress' | 'blossom';
+}
+
+export interface BreakableFenceSegment {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  railLen: number;
+  isWhiteCoastal: boolean;
+  intact: boolean;
+  postInst: THREE.InstancedMesh;
+  postIdx: number;
+  postMatrix: THREE.Matrix4;
+  railInst: THREE.InstancedMesh;
+  railIdx0: number;
+  railIdx1: number;
+  railMatrix0: THREE.Matrix4;
+  railMatrix1: THREE.Matrix4;
+}
+
+export interface BreakableLampPole {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  side: number;
+  intact: boolean;
+  lightIdx: number;
+  poleInst: THREE.InstancedMesh;
+  poleIdx: number;
+  poleMatrix: THREE.Matrix4;
+  lampInst: THREE.InstancedMesh;
+  lampIdx: number;
+  lampMatrix: THREE.Matrix4;
+}
+
+export interface WorldLampPosition {
+  x: number;
+  y: number;
+  z: number;
+  broken?: boolean;
+}
 
 export interface BuiltWorld {
   worldGroup: THREE.Group;
   asphaltRoadMat: THREE.MeshStandardMaterial;
   checkpointBeacon: THREE.Group;
-  lampPositions: Array<{ x: number; y: number; z: number }>;
+  lampPositions: WorldLampPosition[];
+  treeColliders: TreeCollider[];
+  fenceSegments: BreakableFenceSegment[];
+  lampPoles: BreakableLampPole[];
+  triggerTreeImpulse: (
+    x: number,
+    z: number,
+    dirX: number,
+    dirZ: number,
+    strength: number,
+  ) => void;
   updateDynamicWorld: (
     timeSec: number,
     isWet: boolean,
@@ -23,6 +87,14 @@ export interface BuiltWorld {
     playerZ?: number,
     rainIntensity?: number,
     fogMode?: boolean,
+    wind?: WindFieldState,
+    carVx?: number,
+    carVz?: number,
+    trailPoints?: THREE.Vector4[],
+    sunDir?: THREE.Vector3,
+    sunColor?: THREE.Color,
+    sunStrength?: number,
+    dt?: number,
   ) => void;
   dispose: () => void;
 }
@@ -69,14 +141,47 @@ function buildContinuousRibbonGeometry(
   return geo;
 }
 
-// Build arched 3D botanical palm frond geometry extending along +Z with downward droop & V-fold
+// Flared root buttresses & bottom-up ambient occlusion vertex tinting for grounded tree trunks
+function applyRootFlareAndAO(
+  geo: THREE.CylinderGeometry,
+  halfHeight: number,
+  flareStrength = 0.52,
+): void {
+  const pos = geo.attributes.position;
+  const cols = new Float32Array(pos.count * 3);
+  const fullHeight = Math.max(0.1, halfHeight * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const t = THREE.MathUtils.clamp((y + halfHeight) / fullHeight, 0, 1);
+
+    if (t < 0.18) {
+      const rootT = 1 - t / 0.18;
+      const ang = Math.atan2(z, x);
+      const lobe = 1 + Math.sin(ang * 5) * 0.14;
+      const flare = 1 + rootT * rootT * flareStrength * lobe;
+      pos.setX(i, x * flare);
+      pos.setZ(i, z * flare);
+    }
+
+    const ao = 0.54 + 0.46 * THREE.MathUtils.smoothstep(t, 0.0, 0.24);
+    cols[i * 3] = ao;
+    cols[i * 3 + 1] = ao * 0.98;
+    cols[i * 3 + 2] = ao * 0.95;
+  }
+  pos.needsUpdate = true;
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  geo.computeVertexNormals();
+}
+
+// Build arched 3D botanical palm frond geometry extending along +Z with smooth bend segments & V-fold
 function buildArchedPalmFrondGeometry(): THREE.BufferGeometry {
-  const widthSegs = 2;
-  const lenSegs = 7;
-  const width = 1.9;
-  const length = 4.9;
+  const widthSegs = 4;
+  const lenSegs = 10;
+  const width = 1.95;
+  const length = 5.05;
   const geo = new THREE.PlaneGeometry(width, length, widthSegs, lenSegs);
-  // Rotate PlaneGeometry (XY -> XZ) so length goes along +Z (v=1 at tip, v=0 at base)
   geo.rotateX(-Math.PI / 2);
   geo.translate(0, 0, length * 0.5);
 
@@ -85,9 +190,8 @@ function buildArchedPalmFrondGeometry(): THREE.BufferGeometry {
     const x = pos.getX(i);
     const z = pos.getZ(i);
     const t = Math.max(0, Math.min(1, z / length));
-    // Graceful parabolic botanical arch + slight V-fold away from central rachis
-    const archY = Math.sin(t * Math.PI * 0.65) * 0.42 - t * t * 1.65;
-    const vFold = -Math.abs(x) * 0.16;
+    const archY = Math.sin(t * Math.PI * 0.64) * 0.46 - t * t * 1.78;
+    const vFold = -Math.abs(x) * (0.18 + t * 0.08);
     pos.setY(i, archY + vFold);
   }
   pos.needsUpdate = true;
@@ -95,11 +199,11 @@ function buildArchedPalmFrondGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-// Build 3-blade radiating conifer bough star geometry for natural pine silhouette & dappled shadows
+// Build subdivided 5-whorl drooping conifer bough star + layered skirt cones for full 3D pine volume
 function buildPineTierGeometry(): THREE.BufferGeometry {
-  const planes = 4;
-  const width = 2.4;
-  const height = 1.65;
+  const planes = 5;
+  const width = 2.55;
+  const height = 1.78;
   const verts: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
@@ -108,48 +212,47 @@ function buildPineTierGeometry(): THREE.BufferGeometry {
     const yaw = (p / planes) * Math.PI * 2;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    // Slightly tilted outward bough fan
-    const baseIdx = p * 4;
     const hw = width * 0.5;
+    const base = verts.length / 3;
 
-    // 4 corners: bottom-left, bottom-right, top-left, top-right (apex narrowed slightly)
-    const localPts: Array<[number, number, number, number, number]> = [
-      [-hw * 0.55, 0.0, 0.35, 0, 0],
-      [hw * 0.55, 0.0, 0.35, 1, 0],
-      [-hw * 0.45, height, -0.35, 0, 1],
-      [hw * 0.45, height, -0.35, 1, 1],
+    // 3 vertical rows (bottom, mid flared out, apex) so boughs curve & droop gracefully
+    const rows: Array<[number, number, number, number]> = [
+      [-hw * 0.62, 0.0, 0.42, 0.0],
+      [hw * 0.62, 0.0, 0.42, 0.0],
+      [-hw * 0.72, height * 0.46, 0.05, 0.5],
+      [hw * 0.72, height * 0.46, 0.05, 0.5],
+      [-hw * 0.36, height, -0.38, 1.0],
+      [hw * 0.36, height, -0.38, 1.0],
     ];
-
-    for (const [lx, ly, lz, u, v] of localPts) {
-      const wx = lx * cosY + lz * sinY;
-      const wz = -lx * sinY + lz * cosY;
-      verts.push(wx, ly, wz);
-      uvs.push(u, v);
+    for (let r = 0; r < rows.length; r++) {
+      const [lx, ly, lz, vCoord] = rows[r];
+      const uCoord = r % 2 === 0 ? 0 : 1;
+      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+      uvs.push(uCoord, vCoord);
     }
-    indices.push(baseIdx, baseIdx + 1, baseIdx + 2);
-    indices.push(baseIdx + 1, baseIdx + 3, baseIdx + 2);
+    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    indices.push(base + 2, base + 3, base + 4, base + 3, base + 5, base + 4);
   }
 
-  // Add subtle top skirt cone-like angled caps for fullness when viewed from above
-  const capOffset = planes * 4;
-  for (let q = 0; q < 2; q++) {
-    const yaw = q * (Math.PI / 2) + Math.PI / 4;
+  // 3 overlapping horizontal-angled needle skirts for full volumetric silhouette from chase camera
+  for (let q = 0; q < 3; q++) {
+    const yaw = (q / 3) * Math.PI + 0.3;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const hw = width * 0.52;
+    const hw = width * 0.56;
+    const yOff = 0.24 + q * 0.2;
     const pts: Array<[number, number, number, number, number]> = [
-      [-hw, 0.28, -hw * 0.42, 0, 0],
-      [hw, 0.28, -hw * 0.42, 1, 0],
-      [-hw * 0.72, 0.85, hw * 0.42, 0, 1],
-      [hw * 0.72, 0.85, hw * 0.42, 1, 1],
+      [-hw, yOff, -hw * 0.44, 0, 0],
+      [hw, yOff, -hw * 0.44, 1, 0],
+      [-hw * 0.7, yOff + 0.64, hw * 0.44, 0, 1],
+      [hw * 0.7, yOff + 0.64, hw * 0.44, 1, 1],
     ];
-    const b = capOffset + q * 4;
+    const b = verts.length / 3;
     for (const [lx, ly, lz, u, v] of pts) {
       verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
       uvs.push(u, v);
     }
-    indices.push(b, b + 1, b + 2);
-    indices.push(b + 1, b + 3, b + 2);
+    indices.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -160,36 +263,44 @@ function buildPineTierGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-// Build crossed 3-card tapered grass tuft geometry anchored cleanly at y=0
+// Build subdivided 4-blade curved grass tuft geometry (4 vertical segments for elastic wind & tire bend)
 function buildGrassTuftGeometry(): THREE.BufferGeometry {
-  const blades = 3;
-  const w = 1.15;
-  const h = 0.82;
+  const blades = 4;
+  const rows = 3; // 3 quads vertically -> 4 vertex rows
+  const w = 1.24;
+  const h = 0.88;
   const verts: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
 
   for (let b = 0; b < blades; b++) {
-    const yaw = (b / blades) * Math.PI;
+    const yaw = (b / blades) * Math.PI + (b % 2) * 0.11;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
     const hw = w * 0.5;
-    const base = b * 4;
+    const base = b * (rows + 1) * 2;
+    const leanSign = b % 2 === 0 ? 1 : -1;
 
-    // Slight outward lean at top for volume from overhead chase camera
-    const lean = (b % 2 === 0 ? 1 : -1) * 0.14;
-    const corners: Array<[number, number, number, number, number]> = [
-      [-hw, 0, 0, 0, 0],
-      [hw, 0, 0, 1, 0],
-      [-hw * 1.06, h, lean, 0, 1],
-      [hw * 1.06, h, lean, 1, 1],
-    ];
-    for (const [lx, ly, lz, u, v] of corners) {
-      verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
-      uvs.push(u, v);
+    for (let r = 0; r <= rows; r++) {
+      const v = r / rows;
+      const y = v * h;
+      const archZ = leanSign * v * v * 0.22;
+      const halfW = hw * (1.0 - v * 0.14);
+      const pts: Array<[number, number, number, number]> = [
+        [-halfW, y, archZ, 0],
+        [halfW, y, archZ, 1],
+      ];
+      for (const [lx, ly, lz, u] of pts) {
+        verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
+        uvs.push(u, v);
+      }
     }
-    indices.push(base, base + 1, base + 2);
-    indices.push(base + 1, base + 3, base + 2);
+    for (let r = 0; r < rows; r++) {
+      const r0 = base + r * 2;
+      const r1 = r0 + 2;
+      indices.push(r0, r0 + 1, r1);
+      indices.push(r0 + 1, r1 + 1, r1);
+    }
   }
 
   const geo = new THREE.BufferGeometry();
@@ -207,15 +318,15 @@ function buildBroadleafCanopyGeometry(): THREE.BufferGeometry {
   const indices: number[] = [];
   let idxOffset = 0;
 
-  // 4 intersecting angled upright/tilted planes around crown center
-  for (let p = 0; p < 4; p++) {
-    const yaw = (p / 4) * Math.PI + 0.25;
+  // 5 intersecting angled upright/tilted planes around crown center
+  for (let p = 0; p < 5; p++) {
+    const yaw = (p / 5) * Math.PI + 0.18;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const r = 1.55;
-    const h0 = -0.55;
-    const h1 = 1.25;
-    const tilt = (p % 2 === 0 ? 1 : -1) * 0.28;
+    const r = 1.6;
+    const h0 = -0.58;
+    const h1 = 1.32;
+    const tilt = (p % 2 === 0 ? 1 : -1) * 0.3;
     const pts: Array<[number, number, number, number, number]> = [
       [-r, h0, -tilt, 0, 0],
       [r, h0, -tilt, 1, 0],
@@ -231,18 +342,18 @@ function buildBroadleafCanopyGeometry(): THREE.BufferGeometry {
     idxOffset += 4;
   }
 
-  // 2 horizontal/domed upper umbrella caps so canopy looks dense from chase camera
-  for (let c = 0; c < 2; c++) {
-    const yaw = c * (Math.PI / 2) + 0.35;
+  // 3 domed upper umbrella caps for lush full canopy coverage
+  for (let c = 0; c < 3; c++) {
+    const yaw = c * (Math.PI / 3) + 0.25;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const r = 1.65;
-    const yBase = 0.28 + c * 0.28;
+    const r = 1.68 - c * 0.12;
+    const yBase = 0.2 + c * 0.26;
     const pts: Array<[number, number, number, number, number]> = [
       [-r, yBase, -r * 0.85, 0, 0],
       [r, yBase, -r * 0.85, 1, 0],
-      [-r * 0.85, yBase + 0.45, r * 0.85, 0, 1],
-      [r * 0.85, yBase + 0.45, r * 0.85, 1, 1],
+      [-r * 0.85, yBase + 0.48, r * 0.85, 0, 1],
+      [r * 0.85, yBase + 0.48, r * 0.85, 1, 1],
     ];
     for (const [lx, ly, lz, u, v] of pts) {
       verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
@@ -266,27 +377,29 @@ function buildCypressPlumeGeometry(): THREE.BufferGeometry {
   const verts: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
-  const planes = 3;
-  const hw = 1.05;
-  const height = 4.2;
+  const planes = 4;
+  const hw = 1.08;
+  const height = 4.3;
 
   for (let p = 0; p < planes; p++) {
     const yaw = (p / planes) * Math.PI;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const base = p * 4;
+    const base = p * 6;
     const pts: Array<[number, number, number, number, number]> = [
       [-hw, 0, 0, 0, 0],
       [hw, 0, 0, 1, 0],
-      [-hw * 0.85, height, 0, 0, 1],
-      [hw * 0.85, height, 0, 1, 1],
+      [-hw * 0.96, height * 0.5, 0, 0, 0.5],
+      [hw * 0.96, height * 0.5, 0, 1, 0.5],
+      [-hw * 0.82, height, 0, 0, 1],
+      [hw * 0.82, height, 0, 1, 1],
     ];
     for (const [lx, ly, lz, u, v] of pts) {
       verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
       uvs.push(u, v);
     }
-    indices.push(base, base + 1, base + 2);
-    indices.push(base + 1, base + 3, base + 2);
+    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    indices.push(base + 2, base + 3, base + 4, base + 3, base + 5, base + 4);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -297,24 +410,26 @@ function buildCypressPlumeGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
-// Build 6-frond radiating Giant Tropical Jungle Fern rosette anchored at y=0
+// Build 6-frond radiating Giant Tropical Jungle Fern rosette anchored at y=0 (2 segments along frond for elastic crush)
 function buildJungleFernGeometry(): THREE.BufferGeometry {
   const verts: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
   const fronds = 6;
-  const hw = 0.62;
-  const len = 1.65;
+  const hw = 0.64;
+  const len = 1.68;
 
   for (let f = 0; f < fronds; f++) {
     const yaw = (f / fronds) * Math.PI * 2 + (f % 2) * 0.14;
     const cosY = Math.cos(yaw);
     const sinY = Math.sin(yaw);
-    const base = f * 4;
+    const base = f * 6;
     const tipY = 0.72 + (f % 2) * 0.24;
     const pts: Array<[number, number, number, number, number]> = [
       [-hw * 0.35, 0.04, 0.06, 0, 0],
       [hw * 0.35, 0.04, 0.06, 1, 0],
+      [-hw * 0.82, tipY * 0.68, len * 0.54, 0, 0.52],
+      [hw * 0.82, tipY * 0.68, len * 0.54, 1, 0.52],
       [-hw, tipY, len, 0, 1],
       [hw, tipY, len, 1, 1],
     ];
@@ -322,8 +437,8 @@ function buildJungleFernGeometry(): THREE.BufferGeometry {
       verts.push(lx * cosY + lz * sinY, ly, -lx * sinY + lz * cosY);
       uvs.push(u, v);
     }
-    indices.push(base, base + 1, base + 2);
-    indices.push(base + 1, base + 3, base + 2);
+    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    indices.push(base + 2, base + 3, base + 4, base + 3, base + 5, base + 4);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -334,37 +449,82 @@ function buildJungleFernGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
+interface FoliageShaderUniforms {
+  uWindTime: { value: number };
+  uWindDir: { value: THREE.Vector2 };
+  uWindStrength: { value: number };
+  uPlayerXZ: { value: THREE.Vector2 };
+  uCarVelXZ: { value: THREE.Vector2 };
+  uTrailPoints: { value: THREE.Vector4[] };
+  uTreeImpPos: { value: THREE.Vector4[] };
+  uTreeImpAmp: { value: THREE.Vector4 };
+  uSunDir: { value: THREE.Vector3 };
+  uSunColor: { value: THREE.Color };
+  uSunStrength: { value: number };
+}
+
 function attachWindSway(
   material: THREE.MeshStandardMaterial,
-  windUniform: { value: number },
+  shared: FoliageShaderUniforms,
   mode: 'grass' | 'palm' | 'pine',
-  playerPosUniform?: { value: THREE.Vector2 },
   cullRange?: [number, number],
+  hasTireCrush = false,
 ): void {
-  const hasCull = Boolean(playerPosUniform && cullRange);
+  const hasCull = Boolean(cullRange);
+  const useCrush = hasTireCrush && mode === 'grass';
+  const useTreeImpulse = mode === 'palm' || mode === 'pine';
+
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uWindTime = windUniform;
-    if (hasCull && playerPosUniform && cullRange) {
-      shader.uniforms.uPlayerXZ = playerPosUniform;
-      shader.uniforms.uCullRange = { value: new THREE.Vector2(cullRange[0], cullRange[1]) };
+    shader.uniforms.uWindTime = shared.uWindTime;
+    shader.uniforms.uWindDir = shared.uWindDir;
+    shader.uniforms.uWindStrength = shared.uWindStrength;
+    shader.uniforms.uPlayerXZ = shared.uPlayerXZ;
+    shader.uniforms.uCarVelXZ = shared.uCarVelXZ;
+    shader.uniforms.uSunDir = shared.uSunDir;
+    shader.uniforms.uSunColor = shared.uSunColor;
+    shader.uniforms.uSunStrength = shared.uSunStrength;
+    if (useCrush) {
+      shader.uniforms.uTrailPoints = shared.uTrailPoints;
     }
+    if (useTreeImpulse) {
+      shader.uniforms.uTreeImpPos = shared.uTreeImpPos;
+      shader.uniforms.uTreeImpAmp = shared.uTreeImpAmp;
+    }
+    if (hasCull && cullRange) {
+      shader.uniforms.uCullRange = {
+        value: new THREE.Vector2(cullRange[0], cullRange[1]),
+      };
+    }
+
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
         `#include <common>
          uniform float uWindTime;
-         ${hasCull ? 'uniform vec2 uPlayerXZ; uniform vec2 uCullRange;' : ''}`,
+         uniform vec2 uWindDir;
+         uniform float uWindStrength;
+         uniform vec2 uPlayerXZ;
+         uniform vec2 uCarVelXZ;
+         uniform vec3 uSunDir;
+         uniform float uSunStrength;
+         ${useCrush ? 'uniform vec4 uTrailPoints[6];' : ''}
+         ${useTreeImpulse ? 'uniform vec4 uTreeImpPos[4]; uniform vec4 uTreeImpAmp;' : ''}
+         ${hasCull ? 'uniform vec2 uCullRange;' : ''}
+         varying float vFoliageAO;
+         varying float vBacklit;`,
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
+         vFoliageAO = 1.0;
+         vBacklit = 0.0;
          {
            #ifdef USE_INSTANCING
              vec4 wOrigin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-             float phase = wOrigin.x * 0.13 + wOrigin.z * 0.11 + uWindTime * 2.05;
+             vec2 wXZ = wOrigin.xz;
              ${
                hasCull
-                 ? `float dPlayer = distance(wOrigin.xz, uPlayerXZ);
+                 ? `float dPlayer = distance(wXZ, uPlayerXZ);
                     float dScale = 1.0 - smoothstep(uCullRange.x, uCullRange.y, dPlayer);
                     if (dScale <= 0.01) {
                       transformed = vec3(0.0);
@@ -373,30 +533,152 @@ function attachWindSway(
                  : ''
              }
            #else
-             float phase = uWindTime * 2.05;
+             vec2 wXZ = vec2(0.0);
            #endif
+
+           // Traveling coastal wind gust waves + perpendicular wind ripple
+           vec2 windOrtho = vec2(-uWindDir.y, uWindDir.x);
+           float gustWave =
+             sin(dot(wXZ, uWindDir) * 0.06 - uWindTime * (1.35 + uWindStrength * 0.85)) * 0.62 +
+             sin(dot(wXZ, windOrtho) * 0.085 + uWindTime * 1.45) * 0.38;
+           float gustAmp = uWindStrength * (0.68 + 0.48 * gustWave);
+           float flutterPhase = wXZ.x * 0.95 + wXZ.y * 1.15 + uWindTime * (3.6 + uWindStrength * 2.2);
+           float flutter = sin(flutterPhase) * 0.65 + cos(flutterPhase * 1.9 + 0.7) * 0.35;
+
+           #ifdef USE_INSTANCING
+             vec3 instX = instanceMatrix[0].xyz;
+             vec3 instZ = instanceMatrix[2].xyz;
+             float invSx2 = 1.0 / max(0.0001, dot(instX, instX));
+             float invSz2 = 1.0 / max(0.0001, dot(instZ, instZ));
+             #define TO_LOCAL_XZ(wVec2) vec2(dot(vec3((wVec2).x, 0.0, (wVec2).y), instX) * invSx2, dot(vec3((wVec2).x, 0.0, (wVec2).y), instZ) * invSz2)
+           #else
+             #define TO_LOCAL_XZ(wVec2) (wVec2)
+           #endif
+
            ${
              mode === 'grass'
-               ? `float w = clamp(transformed.y / 0.82, 0.0, 1.0);
-                  float sway = (sin(phase) * 0.14 + sin(phase * 2.3 + 0.9) * 0.045) * w * w;
-                  transformed.x += sway;
-                  transformed.z += cos(phase * 0.85) * 0.075 * w * w;`
+               ? `float w = clamp(transformed.y / 0.88, 0.0, 1.0);
+                  float w2 = w * w;
+                  vFoliageAO = mix(0.50, 1.06, w);
+
+                  // Prevailing directional wind lean + fluttering tips
+                  vec2 worldWindBend = uWindDir * (0.20 * gustAmp) + windOrtho * (flutter * 0.055 * uWindStrength);
+                  transformed.xz += TO_LOCAL_XZ(worldWindBend) * w2;
+                  transformed.y -= length(worldWindBend) * 0.18 * w2;
+
+                  // Car aerodynamic slipstream wake parting roadside grass at high speed
+                  float carSpd = length(uCarVelXZ);
+                  if (carSpd > 7.5) {
+                    vec2 fromCar = wXZ - uPlayerXZ;
+                    float dCar = length(fromCar);
+                    float wake = (1.0 - smoothstep(1.8, 9.2, dCar)) * clamp((carSpd - 7.5) / 46.0, 0.0, 1.0);
+                    if (wake > 0.002) {
+                      vec2 wDir = normalize(fromCar + uCarVelXZ * 0.14 + vec2(0.001));
+                      float wOsc = 0.72 + 0.28 * sin(uWindTime * 16.0 + dCar * 2.3);
+                      transformed.xz += TO_LOCAL_XZ(wDir) * wake * 0.56 * wOsc * w2;
+                      transformed.y *= mix(1.0, 0.76, wake * w);
+                    }
+                  }
+
+                  ${
+                    useCrush
+                      ? `float totalCrush = 0.0;
+                         vec2 crushPush = vec2(0.0);
+                         for (int ti = 0; ti < 6; ti++) {
+                           vec4 tp = uTrailPoints[ti];
+                           if (tp.w > 0.01) {
+                             vec2 toBlade = wXZ - tp.xy;
+                             float dT = length(toBlade);
+                             float c = (1.0 - smoothstep(tp.z * 0.36, tp.z, dT)) * tp.w;
+                             if (c > 0.001) {
+                               totalCrush = max(totalCrush, c);
+                               vec2 rDir = dT > 0.01 ? toBlade / dT : uWindDir;
+                               crushPush += rDir * c;
+                             }
+                           }
+                         }
+                         totalCrush = clamp(totalCrush, 0.0, 1.0);
+                         if (totalCrush > 0.005) {
+                           vec2 pDir = length(crushPush) > 0.001 ? normalize(crushPush) : uWindDir;
+                           transformed.y *= mix(1.0, 0.20, totalCrush * w);
+                           transformed.xz += TO_LOCAL_XZ(pDir) * totalCrush * 0.74 * w;
+                         }`
+                      : ''
+                  }`
                : mode === 'palm'
-                 ? `float w = clamp(transformed.z / 4.9, 0.0, 1.0);
-                    float sway = (sin(phase * 0.72) * 0.24 + cos(phase * 1.45) * 0.08) * w * w;
-                    transformed.y += sway * 0.7;
-                    transformed.x += sway * 0.45;`
-                 : `float w = clamp(length(transformed.xz) / 1.35, 0.0, 1.0);
-                    float sway = sin(phase * 0.65) * 0.08 * w;
-                    transformed.x += sway;
-                    transformed.z += cos(phase * 0.55) * 0.06 * w;`
+                 ? `float w = clamp(transformed.z / 5.05, 0.0, 1.0);
+                    float w2 = w * w;
+                    vFoliageAO = mix(0.68, 1.05, w);
+                    vec2 worldDisp = uWindDir * (0.36 * gustAmp) + windOrtho * (flutter * 0.12 * uWindStrength);
+                    vec2 localDisp = TO_LOCAL_XZ(worldDisp);
+                    transformed.x += localDisp.x * w2;
+                    transformed.z += localDisp.y * 0.42 * w2;
+                    transformed.y += (flutter * 0.14 * uWindStrength - gustAmp * 0.18) * w2;`
+                 : `float radial = clamp(length(transformed.xz) / 1.55, 0.0, 1.0);
+                    float hNorm = clamp((transformed.y + 0.6) / 3.2, 0.0, 1.0);
+                    float w = clamp(radial * 0.75 + hNorm * 0.25, 0.0, 1.0);
+                    vFoliageAO = mix(0.64, 1.04, clamp(radial * 0.7 + hNorm * 0.35, 0.0, 1.0));
+                    vec2 branchSway = uWindDir * (0.15 * gustAmp) + windOrtho * (flutter * 0.045 * uWindStrength);
+                    transformed.xz += TO_LOCAL_XZ(branchSway) * w;
+                    transformed.y += flutter * 0.03 * uWindStrength * radial;`
            }
+
+           ${
+             useTreeImpulse
+               ? `#ifdef USE_INSTANCING
+                  for (int ii = 0; ii < 4; ii++) {
+                    float impAmp = ii == 0 ? uTreeImpAmp.x : ii == 1 ? uTreeImpAmp.y : ii == 2 ? uTreeImpAmp.z : uTreeImpAmp.w;
+                    if (impAmp > 0.005) {
+                      vec4 impInfo = uTreeImpPos[ii];
+                      float dImp = distance(wXZ, impInfo.xy);
+                      if (dImp < 5.5) {
+                        float fall = (1.0 - smoothstep(0.8, 5.5, dImp)) * impAmp;
+                        float whip = cos(uWindTime * 13.5 + dImp) * fall;
+                        transformed.xz += TO_LOCAL_XZ(impInfo.zw) * whip * 0.65 * max(0.25, w);
+                        transformed.y += abs(whip) * 0.18 * w;
+                      }
+                    }
+                  }
+                  #endif`
+               : ''
+           }
+           #undef TO_LOCAL_XZ
+
+           // Subsurface scattering estimate when foliage is backlit by sun
+           #ifdef USE_INSTANCING
+             vec3 worldPt = (instanceMatrix * vec4(transformed, 1.0)).xyz;
+           #else
+             vec3 worldPt = (modelMatrix * vec4(transformed, 1.0)).xyz;
+           #endif
+           vec3 toCam = normalize(cameraPosition - worldPt);
+           vBacklit = pow(max(dot(toCam, -normalize(uSunDir)), 0.0), 3.0) * clamp(uSunStrength, 0.0, 1.0) * 0.36;
+
            ${hasCull ? '#ifdef USE_INSTANCING\n}\n#endif' : ''}
          }`,
       );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+         uniform vec3 uSunColor;
+         varying float vFoliageAO;
+         varying float vBacklit;`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+         diffuseColor.rgb *= vFoliageAO;`,
+      )
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+         totalEmissiveRadiance += diffuseColor.rgb * uSunColor * vBacklit;`,
+      );
   };
+
   material.customProgramCacheKey = () =>
-    `wind_${mode}_${hasCull && cullRange ? `${cullRange[0]}_${cullRange[1]}` : 'all'}`;
+    `wind_v2_${mode}_${useCrush ? 'crush' : 'nocrush'}_${hasCull && cullRange ? `${cullRange[0]}_${cullRange[1]}` : 'all'}`;
 }
 
 // Partition static instanced world foliage into a 3x3 spatial grid so camera & shadow frustum culling skip off-screen chunks
@@ -454,8 +736,28 @@ export function buildRealFumaWorld(
   const disposables: Array<{ dispose: () => void }> = [];
   const dummy = new THREE.Object3D();
   const tmpInstanceColor = new THREE.Color();
-  const windUniform = { value: 0 };
-  const playerPosUniform = { value: new THREE.Vector2(0, 0) };
+
+  const foliageUniforms: FoliageShaderUniforms = {
+    uWindTime: { value: 0 },
+    uWindDir: { value: new THREE.Vector2(0.78, 0.625) },
+    uWindStrength: { value: 0.72 },
+    uPlayerXZ: { value: new THREE.Vector2(0, 0) },
+    uCarVelXZ: { value: new THREE.Vector2(0, 0) },
+    uTrailPoints: {
+      value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 2.2, 0)),
+    },
+    uTreeImpPos: {
+      value: Array.from({ length: 4 }, () => new THREE.Vector4(0, 0, 0, 0)),
+    },
+    uTreeImpAmp: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uSunDir: { value: new THREE.Vector3(0.4, 0.7, 0.5) },
+    uSunColor: { value: new THREE.Color(0xfff4d6) },
+    uSunStrength: { value: 1.0 },
+  };
+  let treeImpCursor = 0;
+  const treeColliders: TreeCollider[] = [];
+  const fenceSegments: BreakableFenceSegment[] = [];
+  const lampPoles: BreakableLampPole[] = [];
 
   // 1. Road-Carved Peninsula Terrain (~10.5m grid resolution + normal relief)
   const terrainSize = WORLD_HALF_SIZE * 2;
@@ -745,22 +1047,23 @@ export function buildRealFumaWorld(
   }
   disposables.push(fiaCurbMat);
 
-  // 4. Continuous Armco Steel Guardrails + Galvanized Posts Along Both Edges
+  // 4. Armco Steel Guardrails + Galvanized Posts on Bridges, Tunnels, Alpine Cliffs & Tight Corners
+  // (Open coastal beaches & scenic canyon/harbor meadows stay clear for breakable fences, grass & trees)
   const guardrailMat = new THREE.MeshStandardMaterial({
     color: 0xd8dee9,
     metalness: 0.68,
     roughness: 0.36,
     side: THREE.DoubleSide,
   });
-  for (const side of [-1, 1]) {
+  for (const side of [-1, 1] as const) {
     const railGeo = buildContinuousRibbonGeometry(
       TRACK_STATION_COUNT,
       (idx, col) => {
         const st = TRACK_STATIONS[idx];
         const lat = side * (st.roadWidth * 0.5 + 0.52);
         const baseY = st.y + lat * Math.sin(st.bankRad);
-        const hidden = side === -1 && st.zoneId === 'sunset_coast';
-        const h = hidden ? (col === 0 ? -1.4 : -1.1) : (col === 0 ? 0.44 : 0.78);
+        const hidden = !hasSolidBarrierAt(st, side);
+        const h = hidden ? (col === 0 ? -1.4 : -1.1) : col === 0 ? 0.44 : 0.78;
         return {
           x: st.x + st.rx * lat,
           y: baseY + h,
@@ -793,8 +1096,8 @@ export function buildRealFumaWorld(
   for (let i = 0; i < TRACK_STATION_COUNT; i += postStep) {
     const st = TRACK_STATIONS[i];
     const yaw = Math.atan2(st.tx, st.tz);
-    for (const side of [-1, 1]) {
-      if (side === -1 && st.zoneId === 'sunset_coast') continue;
+    for (const side of [-1, 1] as const) {
+      if (!hasSolidBarrierAt(st, side)) continue;
       const lat = side * (st.roadWidth * 0.5 + 0.62);
       const y = st.y + lat * Math.sin(st.bankRad) + 0.42;
       dummy.position.set(st.x + st.rx * lat, y, st.z + st.rz * lat);
@@ -983,7 +1286,7 @@ export function buildRealFumaWorld(
   worldGroup.add(podiumInst, shaftInst, crownInst);
   disposables.push(podiumGeo, podiumMat, shaftGeo, shaftMat, crownGeo, crownMat);
 
-  // 8. Sculpted Roadside Coastal Palms (Textured Bark + Normal + Feathered Alpha-Cutout Fronds + Wind Sway)
+  // 8. Sculpted Roadside Coastal Palms (Root-Flared Bark + Normal + 13 Arched Fronds + Wind & Impact Physics)
   const palmSpots: Array<{ x: number; y: number; z: number; s: number; lean: number }> = [];
   for (let i = 0; i < 105; i++) {
     const s = 0.012 + (i / 105) * 0.43;
@@ -996,25 +1299,33 @@ export function buildRealFumaWorld(
     if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 4.2) continue;
     const py = getTerrainHeight(px, pz);
     if (py < 0.25) continue;
-    palmSpots.push({ x: px, y: py, z: pz, s: 0.86 + (i % 5) * 0.12, lean: side * (0.12 + (i % 3) * 0.03) });
+    const sVal = 0.86 + (i % 5) * 0.12;
+    palmSpots.push({ x: px, y: py, z: pz, s: sVal, lean: side * (0.12 + (i % 3) * 0.03) });
+    treeColliders.push({
+      x: px,
+      y: py,
+      z: pz,
+      radius: 0.44 * sVal,
+      height: 10.6 * sVal,
+      kind: 'palm',
+    });
   }
   if (palmSpots.length > 0) {
-    // Organic curved tapered trunk
-    const pTrunkGeo = new THREE.CylinderGeometry(0.19, 0.43, 10.6, 10, 5);
+    const pTrunkGeo = new THREE.CylinderGeometry(0.19, 0.43, 10.6, 10, 6);
     const ptPos = pTrunkGeo.attributes.position;
     for (let i = 0; i < ptPos.count; i++) {
-      const py = ptPos.getY(i); // -5.3..5.3
+      const py = ptPos.getY(i);
       const t = Math.max(0, Math.min(1, (py + 5.3) / 10.6));
       ptPos.setX(i, ptPos.getX(i) + Math.pow(t, 1.8) * 0.65);
     }
-    ptPos.needsUpdate = true;
-    pTrunkGeo.computeVertexNormals();
+    applyRootFlareAndAO(pTrunkGeo, 5.3, 0.48);
     pTrunkGeo.computeBoundingSphere();
 
     const pTrunkMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
       map: textures.barkMap,
       normalMap: textures.barkNormalMap,
-      normalScale: new THREE.Vector2(1.2, 1.2),
+      normalScale: new THREE.Vector2(1.25, 1.25),
       color: 0xa68663,
       roughness: 0.9,
     });
@@ -1022,17 +1333,17 @@ export function buildRealFumaWorld(
     const frondGeo = buildArchedPalmFrondGeometry();
     const frondMat = new THREE.MeshStandardMaterial({
       map: textures.palmFrondMap,
-      alphaTest: 0.4,
+      alphaTest: 0.38,
       side: THREE.DoubleSide,
-      roughness: 0.62,
+      roughness: 0.58,
       metalness: 0.02,
     });
-    attachWindSway(frondMat, windUniform, 'palm');
+    attachWindSway(frondMat, foliageUniforms, 'palm');
 
     const coconutGeo = new THREE.SphereGeometry(0.24, 7, 6);
     const coconutMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.85 });
 
-    const frondsPerTree = 11;
+    const frondsPerTree = 13;
     createSpatialChunkInstanced(worldGroup, palmSpots, pTrunkGeo, pTrunkMat, 1, true, true, (p, idx, push) => {
       const yawTree = idx * 0.72;
       dummy.position.set(p.x, p.y + 5.1 * p.s, p.z);
@@ -1061,21 +1372,26 @@ export function buildRealFumaWorld(
       const topZ = p.z + Math.sin(-yawTree) * 0.65 * p.s;
       const topY = p.y + 10.2 * p.s;
       for (let f = 0; f < frondsPerTree; f++) {
-        const tier = f < 5 ? 0 : 1;
-        const yaw = (f / frondsPerTree) * Math.PI * 2 + idx * 0.55;
-        const pitch = tier === 0 ? -0.18 + (f % 2) * 0.12 : 0.14 + (f % 3) * 0.1;
-        dummy.position.set(topX, topY - tier * 0.18, topZ);
+        const tier = f < 4 ? 0 : f < 9 ? 1 : 2;
+        const yaw = (f / frondsPerTree) * Math.PI * 2 + idx * 0.55 + tier * 0.24;
+        const pitch =
+          tier === 0
+            ? -0.28 + (f % 2) * 0.1
+            : tier === 1
+              ? 0.04 + (f % 3) * 0.08
+              : 0.24 + (f % 2) * 0.12;
+        dummy.position.set(topX, topY - tier * 0.16, topZ);
         dummy.rotation.set(pitch, yaw, 0, 'YXZ');
-        const fs = p.s * (tier === 0 ? 0.88 : 1.04);
+        const fs = p.s * (tier === 0 ? 0.84 : tier === 1 ? 1.04 : 0.94);
         dummy.scale.set(fs, fs, fs);
         dummy.updateMatrix();
-        push(dummy.matrix, tmpInstanceColor.setHSL(0.26 + (f % 3) * 0.018, 0.52, 0.56 + (f % 2) * 0.12));
+        push(dummy.matrix, tmpInstanceColor.setHSL(0.26 + (f % 3) * 0.018, 0.52, 0.54 + (f % 2) * 0.12));
       }
     });
     disposables.push(pTrunkGeo, pTrunkMat, frondGeo, frondMat, coconutGeo, coconutMat);
   }
 
-  // 9. Alpine Conifer Pine Groves (Textured Bark + Alpha-Cutout Needle Boughs + Dappled Shadows)
+  // 9. Alpine Conifer Pine Groves (Root-Flared Bark + 5-Tier 3D Drooping Boughs + Dappled Shadows)
   const pineSpots: Array<{ x: number; y: number; z: number; s: number }> = [];
   for (let i = 0; i < 310; i++) {
     const angle = i * 2.39996;
@@ -1086,11 +1402,22 @@ export function buildRealFumaWorld(
     if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 10.5) continue;
     const py = getTerrainHeight(px, pz);
     if (py < 2.2 || py > 50) continue;
-    pineSpots.push({ x: px, y: py, z: pz, s: 0.9 + (i % 5) * 0.16 });
+    const sVal = 0.9 + (i % 5) * 0.16;
+    pineSpots.push({ x: px, y: py, z: pz, s: sVal });
+    treeColliders.push({
+      x: px,
+      y: py,
+      z: pz,
+      radius: 0.46 * sVal,
+      height: 8.4 * sVal,
+      kind: 'pine',
+    });
   }
   if (pineSpots.length > 0) {
-    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.45, 7.6, 8);
+    const trunkGeo = new THREE.CylinderGeometry(0.16, 0.45, 7.6, 8, 4);
+    applyRootFlareAndAO(trunkGeo, 3.8, 0.54);
     const trunkMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
       map: textures.barkMap,
       normalMap: textures.barkNormalMap,
       normalScale: new THREE.Vector2(1.3, 1.3),
@@ -1100,14 +1427,14 @@ export function buildRealFumaWorld(
     const boughGeo = buildPineTierGeometry();
     const foliageMat = new THREE.MeshStandardMaterial({
       map: textures.pineBoughMap,
-      alphaTest: 0.4,
+      alphaTest: 0.36,
       side: THREE.DoubleSide,
-      roughness: 0.85,
+      roughness: 0.82,
       metalness: 0.02,
     });
-    attachWindSway(foliageMat, windUniform, 'pine');
+    attachWindSway(foliageMat, foliageUniforms, 'pine');
 
-    const tiers = 4;
+    const tiers = 5;
     createSpatialChunkInstanced(worldGroup, pineSpots, trunkGeo, trunkMat, 1, true, true, (p, idx, push) => {
       dummy.position.set(p.x, p.y + 3.6 * p.s, p.z);
       dummy.scale.set(p.s, p.s, p.s);
@@ -1119,14 +1446,14 @@ export function buildRealFumaWorld(
       tmpInstanceColor.setHSL(
         0.32 + (idx % 4) * 0.015,
         0.44,
-        0.52 + (idx % 3) * 0.09,
+        0.5 + (idx % 3) * 0.09,
       );
       for (let t = 0; t < tiers; t++) {
-        const w = (2.8 - t * 0.56) * p.s;
-        const h = (3.4 - t * 0.42) * p.s;
-        dummy.position.set(p.x, p.y + (2.5 + t * 2.0) * p.s, p.z);
+        const w = (2.95 - t * 0.48) * p.s;
+        const h = (3.15 - t * 0.34) * p.s;
+        dummy.position.set(p.x, p.y + (2.1 + t * 1.55) * p.s, p.z);
         dummy.scale.set(w, h, w);
-        dummy.rotation.set(0, idx * 0.9 + t * 0.78, 0);
+        dummy.rotation.set(0, idx * 0.9 + t * 0.72, 0);
         dummy.updateMatrix();
         push(dummy.matrix, tmpInstanceColor);
       }
@@ -1140,7 +1467,6 @@ export function buildRealFumaWorld(
     let jx = 0;
     let jz = 0;
     if (i < 175) {
-      // Dense overhanging rainforest corridor framing Palm Canyon & northern coastal foothills
       const s = 0.2 + ((i * 13) % 175) / 175 * 0.295;
       const st = TRACK_STATIONS[Math.floor(s * TRACK_STATION_COUNT) % TRACK_STATION_COUNT];
       if (st.hasTunnel || st.isBridge) continue;
@@ -1149,7 +1475,6 @@ export function buildRealFumaWorld(
       jx = st.x + st.rx * (side * dist) + Math.sin(i * 1.9) * 3.0;
       jz = st.z + st.rz * (side * dist) + Math.cos(i * 2.7) * 3.0;
     } else {
-      // Deep interior jungle basin & valley canopy clusters
       const k = i - 175;
       const a = k * 2.399963;
       const rad = 28 + Math.sqrt(k / 165) * 235;
@@ -1164,17 +1489,25 @@ export function buildRealFumaWorld(
     const proj = projectOntoTrack(jx, jz);
     if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 7.2) continue;
 
+    const sVal = 0.92 + (i % 7) * 0.14;
     jungleSpots.push({
       x: jx,
       y: py,
       z: jz,
-      s: 0.92 + (i % 7) * 0.14,
+      s: sVal,
       yaw: (i * 1.47) % (Math.PI * 2),
+    });
+    treeColliders.push({
+      x: jx,
+      y: py,
+      z: jz,
+      radius: 0.72 * sVal,
+      height: 10.5 * sVal,
+      kind: 'jungle',
     });
   }
 
   if (jungleSpots.length > 0) {
-    // Fluted banyan / rain-tree trunk with curved upper lean
     const jTrunkGeo = new THREE.CylinderGeometry(0.32, 0.78, 9.6, 9, 5);
     const jtPos = jTrunkGeo.attributes.position;
     for (let i = 0; i < jtPos.count; i++) {
@@ -1182,11 +1515,11 @@ export function buildRealFumaWorld(
       const t = Math.max(0, Math.min(1, (py + 4.8) / 9.6));
       jtPos.setX(i, jtPos.getX(i) + Math.sin(t * Math.PI * 0.85) * 0.55);
     }
-    jtPos.needsUpdate = true;
-    jTrunkGeo.computeVertexNormals();
+    applyRootFlareAndAO(jTrunkGeo, 4.8, 0.65);
     jTrunkGeo.computeBoundingSphere();
 
     const jTrunkMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
       map: textures.barkMap,
       normalMap: textures.barkNormalMap,
       normalScale: new THREE.Vector2(1.4, 1.4),
@@ -1199,10 +1532,10 @@ export function buildRealFumaWorld(
       map: textures.jungleLeafMap,
       alphaTest: 0.38,
       side: THREE.DoubleSide,
-      roughness: 0.72,
+      roughness: 0.7,
       metalness: 0.02,
     });
-    attachWindSway(jungleCanopyMat, windUniform, 'pine');
+    attachWindSway(jungleCanopyMat, foliageUniforms, 'pine');
 
     const clustersPerTree = 4;
     const clusterOffsets: Array<[number, number, number, number]> = [
@@ -1254,7 +1587,7 @@ export function buildRealFumaWorld(
     }
     if (bushSpots.length > 0) {
       const bushMat = jungleCanopyMat.clone();
-      attachWindSway(bushMat, windUniform, 'pine', playerPosUniform, [175, 255]);
+      attachWindSway(bushMat, foliageUniforms, 'pine', [175, 255]);
       disposables.push(bushMat);
       createSpatialChunkInstanced(worldGroup, bushSpots, canopyGeo, bushMat, 1, false, true, (b, idx, push) => {
         dummy.position.set(b.x, b.y + 0.7 * b.s, b.z);
@@ -1266,7 +1599,7 @@ export function buildRealFumaWorld(
     }
   }
 
-  // 9c. Giant Tropical Jungle Ferns (1,050 Distance-Culled Ground-Cover Crowns in Palm Canyon)
+  // 9c. Giant Tropical Jungle Ferns (1,050 Distance-Culled & Tire-Reactive Ground Crowns)
   const fernSpots: Array<{ x: number; y: number; z: number; s: number; yaw: number }> = [];
   for (let i = 0; i < 1800 && fernSpots.length < 1050; i++) {
     let fx = 0;
@@ -1299,10 +1632,10 @@ export function buildRealFumaWorld(
       map: textures.fernFrondMap,
       alphaTest: 0.4,
       side: THREE.DoubleSide,
-      roughness: 0.74,
+      roughness: 0.72,
       metalness: 0.02,
     });
-    attachWindSway(fernMat, windUniform, 'grass', playerPosUniform, [115, 175]);
+    attachWindSway(fernMat, foliageUniforms, 'grass', [115, 175], true);
     createSpatialChunkInstanced(worldGroup, fernSpots, fernGeo, fernMat, 1, false, true, (f, idx, push) => {
       dummy.position.set(f.x, f.y, f.z);
       dummy.rotation.set(0, f.yaw, 0);
@@ -1316,7 +1649,6 @@ export function buildRealFumaWorld(
   // 9d. Coastal Cypress & Eucalyptus Groves (Sunset Coast, Harbor Bluffs & Mountain Foot)
   const cypressSpots: Array<{ x: number; y: number; z: number; s: number }> = [];
   for (let i = 0; i < 240 && cypressSpots.length < 185; i++) {
-    // Line Sunset Coast & Fujimi Harbor hillsides + alpine foothill transition
     const s = i < 110
       ? 0.02 + (i / 110) * 0.21
       : 0.65 + ((i - 110) / 130) * 0.15;
@@ -1331,11 +1663,22 @@ export function buildRealFumaWorld(
     if (py < 1.3 || py > 44) continue;
     const proj = projectOntoTrack(cx, cz);
     if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 6.5) continue;
-    cypressSpots.push({ x: cx, y: py, z: cz, s: 0.88 + (i % 5) * 0.16 });
+    const sVal = 0.88 + (i % 5) * 0.16;
+    cypressSpots.push({ x: cx, y: py, z: cz, s: sVal });
+    treeColliders.push({
+      x: cx,
+      y: py,
+      z: cz,
+      radius: 0.36 * sVal,
+      height: 8.8 * sVal,
+      kind: 'cypress',
+    });
   }
   if (cypressSpots.length > 0) {
-    const cyTrunkGeo = new THREE.CylinderGeometry(0.14, 0.34, 7.2, 8);
+    const cyTrunkGeo = new THREE.CylinderGeometry(0.14, 0.34, 7.2, 8, 4);
+    applyRootFlareAndAO(cyTrunkGeo, 3.6, 0.45);
     const cyTrunkMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
       map: textures.barkMap,
       normalMap: textures.barkNormalMap,
       normalScale: new THREE.Vector2(1.1, 1.1),
@@ -1347,10 +1690,10 @@ export function buildRealFumaWorld(
       map: textures.cypressFoliageMap,
       alphaTest: 0.38,
       side: THREE.DoubleSide,
-      roughness: 0.78,
+      roughness: 0.76,
       metalness: 0.02,
     });
-    attachWindSway(plumeMat, windUniform, 'pine');
+    attachWindSway(plumeMat, foliageUniforms, 'pine');
 
     createSpatialChunkInstanced(worldGroup, cypressSpots, cyTrunkGeo, cyTrunkMat, 1, true, true, (c, idx, push) => {
       dummy.position.set(c.x, c.y + 3.5 * c.s, c.z);
@@ -1391,15 +1734,25 @@ export function buildRealFumaWorld(
     const proj = projectOntoTrack(bx, bz);
     if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 5.8) continue;
 
-    // Sakura rose pink near Fujimi Harbor vs warm tropical flame coral-gold in Coast & Jungle
     const tint = isHarbor
       ? new THREE.Color().setHSL(0.93 + (i % 3) * 0.012, 0.72, 0.78)
       : new THREE.Color().setHSL(0.05 + (i % 3) * 0.025, 0.85, 0.66);
-    blossomSpots.push({ x: bx, y: py, z: bz, s: 0.84 + (i % 4) * 0.13, tint });
+    const sVal = 0.84 + (i % 4) * 0.13;
+    blossomSpots.push({ x: bx, y: py, z: bz, s: sVal, tint });
+    treeColliders.push({
+      x: bx,
+      y: py,
+      z: bz,
+      radius: 0.38 * sVal,
+      height: 6.2 * sVal,
+      kind: 'blossom',
+    });
   }
   if (blossomSpots.length > 0) {
-    const blTrunkGeo = new THREE.CylinderGeometry(0.16, 0.38, 4.6, 8);
+    const blTrunkGeo = new THREE.CylinderGeometry(0.16, 0.38, 4.6, 8, 4);
+    applyRootFlareAndAO(blTrunkGeo, 2.3, 0.45);
     const blTrunkMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
       map: textures.barkMap,
       normalMap: textures.barkNormalMap,
       color: 0x4b362b,
@@ -1410,10 +1763,10 @@ export function buildRealFumaWorld(
       map: textures.blossomLeafMap,
       alphaTest: 0.38,
       side: THREE.DoubleSide,
-      roughness: 0.7,
+      roughness: 0.68,
       metalness: 0.02,
     });
-    attachWindSway(blCrownMat, windUniform, 'pine');
+    attachWindSway(blCrownMat, foliageUniforms, 'pine');
 
     createSpatialChunkInstanced(worldGroup, blossomSpots, blTrunkGeo, blTrunkMat, 1, true, true, (b, idx, push) => {
       dummy.position.set(b.x, b.y + 2.2 * b.s, b.z);
@@ -1436,40 +1789,40 @@ export function buildRealFumaWorld(
     disposables.push(blTrunkGeo, blTrunkMat, blCrownGeo, blCrownMat);
   }
 
-  // 10. Instanced Wind-Swayed & Distance-Culled Roadside Grass (6,400 Tufts across 3x3 spatial tiles)
+  // 10. Instanced Multi-Segment Wind-Swept & Tire-Trampled Roadside Grass (8,800 Tufts across 3x3 spatial chunks)
   const grassSpots: Array<{ x: number; y: number; z: number; sx: number; sy: number; yaw: number; tint: THREE.Color }> = [];
   const grassTint = new THREE.Color();
 
-  for (let i = 0; i < 12000 && grassSpots.length < 6400; i++) {
+  for (let i = 0; i < 16500 && grassSpots.length < 8800; i++) {
     let gx = 0;
     let gz = 0;
-    if (i < 8200) {
+    if (i < 11800) {
       const stIdx = (i * 11) % TRACK_STATION_COUNT;
       const st = TRACK_STATIONS[stIdx];
       if (st.isBridge) continue;
       const side = i % 2 === 0 ? 1 : -1;
-      const latDist = st.roadWidth * 0.5 + 2.0 + ((i * 37) % 100) * 0.32;
+      const latDist = st.roadWidth * 0.5 + 1.55 + ((i * 37) % 100) * 0.34;
       gx = st.x + st.rx * (side * latDist) + Math.sin(i * 1.7) * 2.2;
       gz = st.z + st.rz * (side * latDist) + Math.cos(i * 2.3) * 2.2;
     } else {
-      const k = i - 8200;
+      const k = i - 11800;
       const a = k * 2.399963;
-      const r = 38 + Math.sqrt(k / 3800) * 760;
+      const r = 38 + Math.sqrt(k / 4700) * 760;
       gx = Math.cos(a) * r;
       gz = Math.sin(a) * r;
     }
 
     if (Math.abs(gx) > WORLD_HALF_SIZE - 18 || Math.abs(gz) > WORLD_HALF_SIZE - 18) continue;
     const py = getTerrainHeight(gx, gz);
-    if (py < 0.9 || py > 40) continue;
+    if (py < 0.75 || py > 40) continue;
 
     const hx = getTerrainHeight(gx + 3, gz);
     const hz = getTerrainHeight(gx, gz + 3);
     const slope = Math.hypot(hx - py, hz - py) / 3;
-    if (slope > 0.48) continue;
+    if (slope > 0.52) continue;
 
     const proj = projectOntoTrack(gx, gz);
-    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.85) continue;
+    if (Math.abs(proj.lateralOffset) < proj.station.roadWidth * 0.5 + 1.4) continue;
 
     if (gx < 60 && gz < -280) {
       grassTint.setHSL(0.27 + (i % 5) * 0.014, 0.54, 0.42 + (i % 4) * 0.06);
@@ -1483,10 +1836,10 @@ export function buildRealFumaWorld(
 
     grassSpots.push({
       x: gx,
-      y: py - 0.05,
+      y: py - 0.06,
       z: gz,
-      sx: 0.94 + (i % 5) * 0.18,
-      sy: 0.8 + (i % 6) * 0.17,
+      sx: 0.96 + (i % 5) * 0.18,
+      sy: 0.84 + (i % 6) * 0.18,
       yaw: (i * 1.13) % (Math.PI * 2),
       tint: grassTint.clone(),
     });
@@ -1496,12 +1849,12 @@ export function buildRealFumaWorld(
     const grassGeo = buildGrassTuftGeometry();
     const grassMat = new THREE.MeshStandardMaterial({
       map: textures.grassTuftMap,
-      alphaTest: 0.42,
+      alphaTest: 0.38,
       side: THREE.DoubleSide,
-      roughness: 0.86,
+      roughness: 0.84,
       metalness: 0.02,
     });
-    attachWindSway(grassMat, windUniform, 'grass', playerPosUniform, [88, 138]);
+    attachWindSway(grassMat, foliageUniforms, 'grass', [95, 152], true);
     createSpatialChunkInstanced(worldGroup, grassSpots, grassGeo, grassMat, 1, false, true, (g, _idx, push) => {
       dummy.position.set(g.x, g.y, g.z);
       dummy.rotation.set(0, g.yaw, 0);
@@ -1512,7 +1865,7 @@ export function buildRealFumaWorld(
     disposables.push(grassGeo, grassMat);
   }
 
-  // 11. Sleek Highway Light Poles along Harbor, Coast & Tunnel Approaches (Nocturnal Reactive)
+  // 11. Breakable Highway Light Poles along Harbor, Coast & Tunnel Approaches (Nocturnal Reactive + Knockdown Physics)
   const poleSpots: Array<{ x: number; y: number; z: number; yaw: number; side: number }> = [];
   for (let i = 0; i < TRACK_STATION_COUNT; i += 10) {
     const st = TRACK_STATIONS[i];
@@ -1528,7 +1881,7 @@ export function buildRealFumaWorld(
       });
     }
   }
-  const lampPositions: Array<{ x: number; y: number; z: number }> = [];
+  const lampPositions: WorldLampPosition[] = [];
   let lampMat: THREE.MeshStandardMaterial | null = null;
   if (poleSpots.length > 0) {
     const poleGeo = new THREE.CylinderGeometry(0.1, 0.14, 7.6, 8);
@@ -1549,6 +1902,7 @@ export function buildRealFumaWorld(
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       poleInst.setMatrixAt(idx, dummy.matrix);
+      const poleMatrix = dummy.matrix.clone();
 
       const armOffX = Math.cos(p.yaw) * (-p.side * 0.85);
       const armOffZ = -Math.sin(p.yaw) * (-p.side * 0.85);
@@ -1558,7 +1912,26 @@ export function buildRealFumaWorld(
       dummy.position.set(lx, ly, lz);
       dummy.updateMatrix();
       lampInst.setMatrixAt(idx, dummy.matrix);
-      lampPositions.push({ x: lx, y: ly - 0.3, z: lz });
+      const lampMatrix = dummy.matrix.clone();
+
+      const lightIdx = lampPositions.length;
+      lampPositions.push({ x: lx, y: ly - 0.3, z: lz, broken: false });
+      lampPoles.push({
+        id: idx,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        yaw: p.yaw,
+        side: p.side,
+        intact: true,
+        lightIdx,
+        poleInst,
+        poleIdx: idx,
+        poleMatrix,
+        lampInst,
+        lampIdx: idx,
+        lampMatrix,
+      });
     });
     poleInst.instanceMatrix.needsUpdate = true;
     lampInst.instanceMatrix.needsUpdate = true;
@@ -1568,7 +1941,7 @@ export function buildRealFumaWorld(
     disposables.push(poleGeo, poleMat, lampGeo, lampMat);
   }
 
-  // 11b. Sunset Coast Whitewashed Concrete Seawall & Boardwalk Promenade Rail
+  // 11b. Sunset Coast Low Concrete Seawall Curb & Breakable Coastal Promenade Fence
   const seawallMat = new THREE.MeshStandardMaterial({
     color: 0xe2e8f0,
     roughness: 0.76,
@@ -1586,10 +1959,10 @@ export function buildRealFumaWorld(
       const wx = st.x + st.rx * lat;
       const wz = st.z + st.rz * lat;
       const baseY = st.y + lat * Math.sin(st.bankRad);
-      // Inner top, outer top, outer bottom
-      wallVerts.push(wx - st.rx * 0.15, baseY + 0.52, wz - st.rz * 0.15);
-      wallVerts.push(wx + st.rx * 0.25, baseY + 0.52, wz + st.rz * 0.25);
-      wallVerts.push(wx + st.rx * 0.25, baseY - 1.6, wz + st.rz * 0.25);
+      // Low beveled promenade apron so cars smash smoothly through coastal fences onto the beach
+      wallVerts.push(wx - st.rx * 0.15, baseY + 0.16, wz - st.rz * 0.15);
+      wallVerts.push(wx + st.rx * 0.28, baseY + 0.16, wz + st.rz * 0.28);
+      wallVerts.push(wx + st.rx * 0.35, baseY - 1.4, wz + st.rz * 0.35);
     }
     for (let i = 0; i < seawallCount; i++) {
       const a = i * 3;
@@ -1607,20 +1980,19 @@ export function buildRealFumaWorld(
     worldGroup.add(wallMesh);
     disposables.push(wallGeo, seawallMat);
 
-    // Coastal wooden-look promenade fence posts & rails atop seawall
     const fencePosts: Array<{ x: number; y: number; z: number; yaw: number }> = [];
     for (let i = seawallStart; i < seawallEnd; i += 2) {
       const st = TRACK_STATIONS[i];
-      const lat = -(st.roadWidth * 0.5 + 1.15);
+      const lat = -(st.roadWidth * 0.5 + 1.18);
       fencePosts.push({
         x: st.x + st.rx * lat,
-        y: st.y + lat * Math.sin(st.bankRad) + 0.52,
+        y: st.y + lat * Math.sin(st.bankRad) + 0.16,
         z: st.z + st.rz * lat,
         yaw: Math.atan2(st.tx, st.tz),
       });
     }
     if (fencePosts.length > 0) {
-      const fPostGeo = new THREE.BoxGeometry(0.14, 0.82, 0.14);
+      const fPostGeo = new THREE.BoxGeometry(0.14, 0.86, 0.14);
       const fRailGeo = new THREE.BoxGeometry(0.08, 0.09, 5.5);
       const fMat = new THREE.MeshStandardMaterial({ color: 0xf1ede4, roughness: 0.78 });
       const fPostInst = new THREE.InstancedMesh(fPostGeo, fMat, fencePosts.length);
@@ -1628,18 +2000,41 @@ export function buildRealFumaWorld(
       fPostInst.castShadow = true;
       fRailInst.castShadow = false;
       fencePosts.forEach((fp, idx) => {
-        dummy.position.set(fp.x, fp.y + 0.41, fp.z);
+        dummy.position.set(fp.x, fp.y + 0.43, fp.z);
         dummy.rotation.set(0, fp.yaw, 0);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
         fPostInst.setMatrixAt(idx, dummy.matrix);
+        const postMatrix = dummy.matrix.clone();
 
-        dummy.position.set(fp.x, fp.y + 0.68, fp.z);
+        dummy.position.set(fp.x, fp.y + 0.72, fp.z);
         dummy.updateMatrix();
         fRailInst.setMatrixAt(idx * 2, dummy.matrix);
-        dummy.position.set(fp.x, fp.y + 0.38, fp.z);
+        const railMatrix0 = dummy.matrix.clone();
+
+        dummy.position.set(fp.x, fp.y + 0.4, fp.z);
         dummy.updateMatrix();
         fRailInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+        const railMatrix1 = dummy.matrix.clone();
+
+        fenceSegments.push({
+          id: fenceSegments.length,
+          x: fp.x,
+          y: fp.y,
+          z: fp.z,
+          yaw: fp.yaw,
+          railLen: 5.5,
+          isWhiteCoastal: true,
+          intact: true,
+          postInst: fPostInst,
+          postIdx: idx,
+          postMatrix,
+          railInst: fRailInst,
+          railIdx0: idx * 2,
+          railIdx1: idx * 2 + 1,
+          railMatrix0,
+          railMatrix1,
+        });
       });
       fPostInst.instanceMatrix.needsUpdate = true;
       fRailInst.instanceMatrix.needsUpdate = true;
@@ -1648,6 +2043,82 @@ export function buildRealFumaWorld(
       worldGroup.add(fPostInst, fRailInst);
       disposables.push(fPostGeo, fRailGeo, fMat);
     }
+  }
+
+  // 11d. Breakable Weathered Timber Fences along Open Countryside & Harbor Meadow Verges
+  const woodFenceSpots: Array<{ x: number; y: number; z: number; yaw: number }> = [];
+  for (let i = 0; i < TRACK_STATION_COUNT; i += 2) {
+    const st = TRACK_STATIONS[i];
+    if (st.isBridge || st.hasTunnel) continue;
+    for (const side of [-1, 1] as const) {
+      if (hasSolidBarrierAt(st, side)) continue;
+      if (side === -1 && st.zoneId === 'sunset_coast') continue;
+      // Leave scenic natural meadow gaps so countryside fences frame bends and clearings
+      if (Math.floor(i / 18) % 3 === 1) continue;
+      const lat = side * (st.roadWidth * 0.5 + 1.65);
+      const fx = st.x + st.rx * lat;
+      const fz = st.z + st.rz * lat;
+      const fy = getTerrainHeight(fx, fz);
+      if (fy < 0.4) continue;
+      woodFenceSpots.push({
+        x: fx,
+        y: fy,
+        z: fz,
+        yaw: Math.atan2(st.tx, st.tz),
+      });
+    }
+  }
+  if (woodFenceSpots.length > 0) {
+    const cPostGeo = new THREE.BoxGeometry(0.16, 0.96, 0.16);
+    const cRailGeo = new THREE.BoxGeometry(0.08, 0.11, 5.4);
+    const cMat = new THREE.MeshStandardMaterial({ color: 0x8a6946, roughness: 0.88, metalness: 0.02 });
+    const cPostInst = new THREE.InstancedMesh(cPostGeo, cMat, woodFenceSpots.length);
+    const cRailInst = new THREE.InstancedMesh(cRailGeo, cMat, woodFenceSpots.length * 2);
+    cPostInst.castShadow = true;
+    cRailInst.castShadow = false;
+    woodFenceSpots.forEach((fp, idx) => {
+      dummy.position.set(fp.x, fp.y + 0.46, fp.z);
+      dummy.rotation.set(0, fp.yaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      cPostInst.setMatrixAt(idx, dummy.matrix);
+      const postMatrix = dummy.matrix.clone();
+
+      dummy.position.set(fp.x, fp.y + 0.78, fp.z);
+      dummy.updateMatrix();
+      cRailInst.setMatrixAt(idx * 2, dummy.matrix);
+      const railMatrix0 = dummy.matrix.clone();
+
+      dummy.position.set(fp.x, fp.y + 0.44, fp.z);
+      dummy.updateMatrix();
+      cRailInst.setMatrixAt(idx * 2 + 1, dummy.matrix);
+      const railMatrix1 = dummy.matrix.clone();
+
+      fenceSegments.push({
+        id: fenceSegments.length,
+        x: fp.x,
+        y: fp.y,
+        z: fp.z,
+        yaw: fp.yaw,
+        railLen: 5.4,
+        isWhiteCoastal: false,
+        intact: true,
+        postInst: cPostInst,
+        postIdx: idx,
+        postMatrix,
+        railInst: cRailInst,
+        railIdx0: idx * 2,
+        railIdx1: idx * 2 + 1,
+        railMatrix0,
+        railMatrix1,
+      });
+    });
+    cPostInst.instanceMatrix.needsUpdate = true;
+    cRailInst.instanceMatrix.needsUpdate = true;
+    cPostInst.computeBoundingSphere();
+    cRailInst.computeBoundingSphere();
+    worldGroup.add(cPostInst, cRailInst);
+    disposables.push(cPostGeo, cRailGeo, cMat);
   }
 
   // 11c. Colorful Resort Beach Umbrellas / Parasols along Sunset Coast & Terraces
@@ -1733,6 +2204,20 @@ export function buildRealFumaWorld(
     asphaltRoadMat,
     checkpointBeacon,
     lampPositions,
+    treeColliders,
+    fenceSegments,
+    lampPoles,
+    triggerTreeImpulse: (x, z, dirX, dirZ, strength) => {
+      const slot = treeImpCursor;
+      treeImpCursor = (treeImpCursor + 1) % 4;
+      foliageUniforms.uTreeImpPos.value[slot].set(x, z, dirX, dirZ);
+      const clamped = THREE.MathUtils.clamp(strength, 0.15, 2.2);
+      const amp = foliageUniforms.uTreeImpAmp.value;
+      if (slot === 0) amp.x = clamped;
+      else if (slot === 1) amp.y = clamped;
+      else if (slot === 2) amp.z = clamped;
+      else amp.w = clamped;
+    },
     updateDynamicWorld: (
       timeSec,
       isWet,
@@ -1741,9 +2226,39 @@ export function buildRealFumaWorld(
       playerZ = 0,
       rainIntensity = 0,
       fogMode = false,
+      wind,
+      carVx = 0,
+      carVz = 0,
+      trailPoints,
+      sunDir,
+      sunColor,
+      sunStrength = 1,
+      dt = 0.016,
     ) => {
-      windUniform.value = timeSec;
-      playerPosUniform.value.set(playerX, playerZ);
+      foliageUniforms.uWindTime.value = timeSec;
+      if (wind) {
+        foliageUniforms.uWindDir.value.set(wind.dirX, wind.dirZ);
+        foliageUniforms.uWindStrength.value = wind.gustStrength;
+      }
+      foliageUniforms.uPlayerXZ.value.set(playerX, playerZ);
+      foliageUniforms.uCarVelXZ.value.set(carVx, carVz);
+      if (trailPoints) {
+        for (let i = 0; i < 6 && i < trailPoints.length; i++) {
+          foliageUniforms.uTrailPoints.value[i].copy(trailPoints[i]);
+        }
+      }
+      if (sunDir) foliageUniforms.uSunDir.value.copy(sunDir);
+      if (sunColor) foliageUniforms.uSunColor.value.copy(sunColor);
+      foliageUniforms.uSunStrength.value = sunStrength;
+
+      // Decay tree collision canopy impulses smoothly
+      const impDecay = Math.exp(-2.6 * Math.max(0.001, dt));
+      const amp = foliageUniforms.uTreeImpAmp.value;
+      amp.x *= impDecay;
+      amp.y *= impDecay;
+      amp.z *= impDecay;
+      amp.w *= impDecay;
+
       roadWeatherUniforms.uRoadTime.value = timeSec;
       roadWeatherUniforms.uRoadWetness.value +=
         ((isWet ? 1.0 : 0.0) - roadWeatherUniforms.uRoadWetness.value) * 0.06;

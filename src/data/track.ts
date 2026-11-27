@@ -414,13 +414,27 @@ export function getTerrainHeight(x: number, z: number): number {
   return raw;
 }
 
+export function hasSolidBarrierAt(st: TrackStation, side: -1 | 1): boolean {
+  if (st.isBridge || st.hasTunnel) return true;
+  if (side === -1 && st.zoneId === 'sunset_coast') return false;
+  if (st.zoneId === 'alpine_pass') return true;
+  if (Math.abs(st.curvature) > 0.34) return true;
+  return false;
+}
+
 export function getDriveSurfaceHeight(x: number, z: number, hintIdx?: number): number {
   const proj = projectOntoTrack(x, z, hintIdx);
   const halfW = proj.station.roadWidth * 0.5;
-  if (Math.abs(proj.lateralOffset) <= halfW + 1.5) {
+  const absLat = Math.abs(proj.lateralOffset);
+  if (absLat <= halfW + 0.85) {
     return proj.surfaceY;
   }
-  return getTerrainHeight(x, z);
+  const terrainY = getTerrainHeight(x, z);
+  if (absLat < halfW + 2.6) {
+    const t = THREE.MathUtils.smoothstep(absLat, halfW + 0.85, halfW + 2.6);
+    return THREE.MathUtils.lerp(proj.surfaceY, terrainY, t);
+  }
+  return terrainY;
 }
 
 export function getSurfaceAt(

@@ -498,35 +498,44 @@ export function createProceduralTextures(
   pfctx.lineTo(256, 16);
   pfctx.stroke();
 
-  // Paired tapering feathered leaflets along spine
-  const leafletPairs = 34;
+  // Paired tapering feathered leaflets along spine (dense realistic palm pinnae)
+  const leafletPairs = 44;
   for (let i = 0; i < leafletPairs; i++) {
     const t = i / (leafletPairs - 1); // 0 = base, 1 = tip
-    const yBase = 492 - t * 468;
-    const envelope = Math.sin(Math.pow(t, 0.65) * Math.PI * 0.92 + 0.14);
-    const len = 34 + envelope * 198;
-    const droop = 18 + t * 28;
-    const width = 9 + (1 - t) * 7;
+    const yBase = 496 - t * 474;
+    const envelope = Math.sin(Math.pow(t, 0.62) * Math.PI * 0.93 + 0.12);
+    const len = 30 + envelope * 206 + (rng() - 0.5) * 14;
+    const droop = 16 + t * 34 + (rng() - 0.5) * 8;
+    const width = 7.5 + (1 - t) * 5.8;
 
     for (const side of [-1, 1]) {
       const tipX = 256 + side * len;
-      const tipY = yBase - 42 + droop;
-      const ctrlX = 256 + side * len * 0.52;
+      const tipY = yBase - 40 + droop;
+      const ctrlX = 256 + side * len * 0.54;
       const ctrlY = yBase - 34;
 
       const lGrad = pfctx.createLinearGradient(256, yBase, tipX, tipY);
-      const shade = i % 2 === 0 ? '#3f7d2b' : '#4e9134';
-      lGrad.addColorStop(0, '#2c5a1e');
-      lGrad.addColorStop(0.45, shade);
-      lGrad.addColorStop(1, '#79a83b');
+      const isSunlit = i % 3 === 0;
+      lGrad.addColorStop(0, '#224717');
+      lGrad.addColorStop(0.32, isSunlit ? '#3d7c27' : '#316a21');
+      lGrad.addColorStop(0.75, isSunlit ? '#63a134' : '#4f8c2d');
+      lGrad.addColorStop(1, t > 0.72 || i % 7 === 0 ? '#9ab548' : '#7eb33f');
 
       pfctx.fillStyle = lGrad;
       pfctx.beginPath();
       pfctx.moveTo(256, yBase - width * 0.45);
-      pfctx.quadraticCurveTo(ctrlX, ctrlY - width * 0.55, tipX, tipY);
-      pfctx.quadraticCurveTo(ctrlX, ctrlY + width * 0.35, 256, yBase + width * 0.45);
+      pfctx.quadraticCurveTo(ctrlX, ctrlY - width * 0.58, tipX, tipY);
+      pfctx.quadraticCurveTo(ctrlX, ctrlY + width * 0.32, 256, yBase + width * 0.45);
       pfctx.closePath();
       pfctx.fill();
+
+      // Crisp thin mid-vein highlight along upper leaflet
+      pfctx.strokeStyle = 'rgba(195, 232, 128, 0.24)';
+      pfctx.lineWidth = 1.1;
+      pfctx.beginPath();
+      pfctx.moveTo(256, yBase);
+      pfctx.quadraticCurveTo(ctrlX, ctrlY - width * 0.08, tipX, tipY);
+      pfctx.stroke();
     }
   }
   const palmFrondMap = new THREE.CanvasTexture(pfCanvas);
@@ -541,21 +550,23 @@ export function createProceduralTextures(
   pbctx.clearRect(0, 0, 512, 512);
 
   // Woody inner branch twigs fanning upward/outward
-  pbctx.strokeStyle = '#3d2a1a';
-  pbctx.lineWidth = 9;
+  pbctx.strokeStyle = '#3b2617';
+  pbctx.lineWidth = 10;
   pbctx.lineCap = 'round';
   pbctx.beginPath();
   pbctx.moveTo(256, 505);
-  pbctx.lineTo(256, 52);
+  pbctx.lineTo(256, 44);
   pbctx.stroke();
 
   const subBranches = [
-    { y0: 440, x1: 110, y1: 270 },
-    { y0: 430, x1: 402, y1: 265 },
-    { y0: 330, x1: 88, y1: 175 },
-    { y0: 325, x1: 422, y1: 170 },
-    { y0: 225, x1: 132, y1: 98 },
-    { y0: 220, x1: 380, y1: 95 },
+    { y0: 450, x1: 92, y1: 270 },
+    { y0: 445, x1: 420, y1: 265 },
+    { y0: 360, x1: 78, y1: 185 },
+    { y0: 355, x1: 432, y1: 180 },
+    { y0: 260, x1: 108, y1: 112 },
+    { y0: 255, x1: 404, y1: 108 },
+    { y0: 165, x1: 158, y1: 62 },
+    { y0: 160, x1: 354, y1: 60 },
   ];
   pbctx.lineWidth = 5;
   for (const sb of subBranches) {
@@ -565,18 +576,25 @@ export function createProceduralTextures(
     pbctx.stroke();
   }
 
-  // Dense layered pine needle clusters along trunk & sub-branches
-  const drawNeedleFan = (cx: number, cy: number, baseAngle: number, scale: number, count: number) => {
+  // Dense layered pine needle clusters along trunk & sub-branches (inner shadow needles + bright outer tips)
+  const drawNeedleFan = (
+    cx: number,
+    cy: number,
+    baseAngle: number,
+    scale: number,
+    count: number,
+    highlight: boolean,
+  ) => {
     for (let n = 0; n < count; n++) {
-      const a = baseAngle + (rng() - 0.5) * 1.35;
-      const len = (22 + rng() * 26) * scale;
+      const a = baseAngle + (rng() - 0.5) * 1.48;
+      const len = (20 + rng() * 28) * scale;
       const nx = cx + Math.sin(a) * len;
       const ny = cy - Math.cos(a) * len;
-      const gTone = Math.floor(55 + rng() * 55);
-      const rTone = Math.floor(24 + rng() * 34);
-      const bTone = Math.floor(24 + rng() * 26);
+      const gTone = Math.floor((highlight ? 76 : 42) + rng() * 58);
+      const rTone = Math.floor((highlight ? 34 : 18) + rng() * 34);
+      const bTone = Math.floor((highlight ? 28 : 18) + rng() * 26);
       pbctx.strokeStyle = `rgb(${rTone},${gTone},${bTone})`;
-      pbctx.lineWidth = 2.4 + rng() * 1.4;
+      pbctx.lineWidth = 2.0 + rng() * 1.6;
       pbctx.beginPath();
       pbctx.moveTo(cx, cy);
       pbctx.lineTo(nx, ny);
@@ -584,53 +602,82 @@ export function createProceduralTextures(
     }
   };
 
-  for (let step = 0; step <= 20; step++) {
-    const t = step / 20;
-    const y = 475 - t * 425;
-    drawNeedleFan(256, y, 0, 1.0 - t * 0.35, 34);
+  for (let step = 0; step <= 26; step++) {
+    const t = step / 26;
+    const y = 482 - t * 435;
+    drawNeedleFan(256, y, 0, 1.04 - t * 0.34, 30, t > 0.45);
   }
   for (const sb of subBranches) {
-    for (let k = 0.25; k <= 1.0; k += 0.15) {
+    for (let k = 0.2; k <= 1.0; k += 0.12) {
       const bx = 256 + (sb.x1 - 256) * k;
       const by = sb.y0 + (sb.y1 - sb.y0) * k;
       const dir = Math.atan2(sb.x1 - 256, -(sb.y1 - sb.y0));
-      drawNeedleFan(bx, by, dir, 0.85, 24);
+      drawNeedleFan(bx, by, dir, 0.88, 22, k > 0.58);
     }
   }
   const pineBoughMap = new THREE.CanvasTexture(pbCanvas);
   pineBoughMap.colorSpace = THREE.SRGBColorSpace;
   pineBoughMap.anisotropy = aniso;
 
-  // 11. Lush Multi-Blade Wild Meadow Grass Clump Alpha-Cutout Texture (sRGB RGBA)
+  // 11. High-Detail 512px Wild Meadow Grass Clump + Dry Thatch & Seed Heads (sRGB RGBA)
   const grCanvas = document.createElement('canvas');
-  grCanvas.width = 256;
-  grCanvas.height = 256;
+  grCanvas.width = 512;
+  grCanvas.height = 512;
   const grctx = grCanvas.getContext('2d')!;
-  grctx.clearRect(0, 0, 256, 256);
+  grctx.clearRect(0, 0, 512, 512);
 
-  const bladeCount = 19;
+  // Back shadow blades + slender dry stalks + vibrant arching foreground meadow blades
+  const bladeCount = 44;
   for (let b = 0; b < bladeCount; b++) {
-    const frac = b / (bladeCount - 1);
-    const rootX = 66 + frac * 124 + (rng() - 0.5) * 14;
-    const leanX = (frac - 0.5) * 138 + (rng() - 0.5) * 32;
-    const tipY = 12 + Math.abs(frac - 0.5) * 52 + rng() * 34;
-    const tipX = Math.max(8, Math.min(248, rootX + leanX));
-    const ctrlX = rootX + leanX * 0.38;
-    const ctrlY = 132;
-    const halfBase = 5.5 + rng() * 4.5;
+    const layer = b < 14 ? 0 : b < 32 ? 1 : 2;
+    const frac = ((b * 17) % bladeCount) / (bladeCount - 1);
+    const rootX = 116 + frac * 280 + (rng() - 0.5) * 26;
+    const leanX = (frac - 0.5) * (layer === 0 ? 210 : 285) + (rng() - 0.5) * 58;
+    const tipY = 18 + Math.abs(frac - 0.5) * 95 + rng() * (layer === 0 ? 110 : 68);
+    const tipX = Math.max(14, Math.min(498, rootX + leanX));
+    const ctrlX = rootX + leanX * 0.34;
+    const ctrlY = 250 + rng() * 44;
+    const halfBase = (layer === 0 ? 10 : 7.5) + rng() * 5.5;
 
-    const gGrad = grctx.createLinearGradient(rootX, 256, tipX, tipY);
-    gGrad.addColorStop(0, '#1f3f18');
-    gGrad.addColorStop(0.45, b % 2 === 0 ? '#45832e' : '#579a39');
-    gGrad.addColorStop(1, b % 3 === 0 ? '#b4d665' : '#96c450');
+    const isDryBlade = b % 8 === 3;
+    const gGrad = grctx.createLinearGradient(rootX, 512, tipX, tipY);
+    if (isDryBlade) {
+      gGrad.addColorStop(0, '#363b1c');
+      gGrad.addColorStop(0.5, '#7e7d3a');
+      gGrad.addColorStop(1, '#c8ba64');
+    } else if (layer === 0) {
+      gGrad.addColorStop(0, '#13290f');
+      gGrad.addColorStop(0.55, '#2b591e');
+      gGrad.addColorStop(1, '#4c862c');
+    } else if (layer === 1) {
+      gGrad.addColorStop(0, '#1c3b15');
+      gGrad.addColorStop(0.45, b % 2 === 0 ? '#417c29' : '#4f8e32');
+      gGrad.addColorStop(1, '#84b946');
+    } else {
+      gGrad.addColorStop(0, '#234719');
+      gGrad.addColorStop(0.42, '#539436');
+      gGrad.addColorStop(1, b % 2 === 0 ? '#b7d969' : '#9ac952');
+    }
 
     grctx.fillStyle = gGrad;
     grctx.beginPath();
-    grctx.moveTo(rootX - halfBase, 256);
-    grctx.quadraticCurveTo(ctrlX - halfBase * 0.42, ctrlY, tipX, tipY);
-    grctx.quadraticCurveTo(ctrlX + halfBase * 0.42, ctrlY, rootX + halfBase, 256);
+    grctx.moveTo(rootX - halfBase, 512);
+    grctx.quadraticCurveTo(ctrlX - halfBase * 0.4, ctrlY, tipX, tipY);
+    grctx.quadraticCurveTo(ctrlX + halfBase * 0.4, ctrlY, rootX + halfBase, 512);
     grctx.closePath();
     grctx.fill();
+
+    // Subtle slender wildflower / meadow seed plume on tall outer stalks
+    if (layer === 2 && b % 6 === 1 && tipY < 130) {
+      grctx.fillStyle = 'rgba(228, 224, 168, 0.92)';
+      for (let s = 0; s < 5; s++) {
+        const sy = tipY + s * 9;
+        const sx = tipX - leanX * (s * 0.025);
+        grctx.beginPath();
+        grctx.ellipse(sx + (s % 2 === 0 ? 3 : -3), sy, 3.2, 5.4, leanX * 0.002, 0, Math.PI * 2);
+        grctx.fill();
+      }
+    }
   }
   const grassTuftMap = new THREE.CanvasTexture(grCanvas);
   grassTuftMap.colorSpace = THREE.SRGBColorSpace;
@@ -656,9 +703,9 @@ export function createProceduralTextures(
   }
 
   // Rich overlapping tropical leaves (dark inner shadow leaves + vibrant outer lit leaves)
-  for (let l = 0; l < 115; l++) {
-    const ring = l < 42 ? 0 : l < 85 ? 1 : 2;
-    const rad = (ring === 0 ? rng() * 95 : ring === 1 ? 65 + rng() * 110 : 90 + rng() * 115);
+  for (let l = 0; l < 135; l++) {
+    const ring = l < 48 ? 0 : l < 96 ? 1 : 2;
+    const rad = (ring === 0 ? rng() * 92 : ring === 1 ? 60 + rng() * 114 : 88 + rng() * 118);
     const a = rng() * Math.PI * 2;
     const lx = 256 + Math.cos(a) * rad;
     const ly = 256 + Math.sin(a) * rad;
@@ -672,16 +719,16 @@ export function createProceduralTextures(
 
     const gGrad = jlctx.createLinearGradient(-len * 0.5, 0, len * 0.5, 0);
     if (ring === 0) {
-      gGrad.addColorStop(0, '#133519');
-      gGrad.addColorStop(1, '#235927');
+      gGrad.addColorStop(0, '#0f2c14');
+      gGrad.addColorStop(1, '#1e4f21');
     } else if (ring === 1) {
-      gGrad.addColorStop(0, '#1e5423');
-      gGrad.addColorStop(0.55, '#2f7a32');
-      gGrad.addColorStop(1, '#4ca33f');
+      gGrad.addColorStop(0, '#1a4c1e');
+      gGrad.addColorStop(0.55, '#2b742e');
+      gGrad.addColorStop(1, '#489d3b');
     } else {
-      gGrad.addColorStop(0, '#2a6f2c');
+      gGrad.addColorStop(0, '#276a29');
       gGrad.addColorStop(0.6, '#489b3b');
-      gGrad.addColorStop(1, '#79c24f');
+      gGrad.addColorStop(1, '#84cb54');
     }
     jlctx.fillStyle = gGrad;
     jlctx.beginPath();
@@ -692,7 +739,7 @@ export function createProceduralTextures(
     jlctx.fill();
 
     // Central leaf midrib vein
-    jlctx.strokeStyle = 'rgba(180, 235, 130, 0.25)';
+    jlctx.strokeStyle = 'rgba(185, 240, 135, 0.28)';
     jlctx.lineWidth = 1.4;
     jlctx.beginPath();
     jlctx.moveTo(-len * 0.42, 0);

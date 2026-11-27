@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CarBaseSpec, ControlInputState, WeatherType } from '../types/game';
 import { VehiclePhysicsState } from './physics';
+import { WindFieldState } from './wind';
 
 const MAX_PARTICLES = 440;
 
@@ -8,6 +9,7 @@ export interface TireSmokeUpdateOptions {
   driftThresholdDeg?: number;
   daylightFactor?: number;
   driftActive?: boolean;
+  wind?: WindFieldState;
 }
 
 export class TireSmokeSystem {
@@ -269,7 +271,7 @@ export class TireSmokeSystem {
       physics.speedKmh < 28;
     const isOffroadSpray =
       physics.surface !== 'asphalt' &&
-      (physics.speedKmh > 24 || physics.driftAngleDeg > thresholdDeg);
+      (physics.speedKmh > 18 || physics.driftAngleDeg > thresholdDeg);
 
     if (physics.grounded && (driftTriggered || isBurnout || isOffroadSpray)) {
       const slipExcess = Math.max(0, physics.driftAngleDeg - (thresholdDeg - 1));
@@ -427,9 +429,11 @@ export class TireSmokeSystem {
 
       anyActive = true;
       const i3 = i * 3;
-      this.velocities[i3] *= drag;
+      const windVx = options?.wind ? options.wind.dirX * options.wind.speedMs * 0.24 : 0;
+      const windVz = options?.wind ? options.wind.dirZ * options.wind.speedMs * 0.24 : 0;
+      this.velocities[i3] = this.velocities[i3] * drag + windVx * dt * 2.2;
       this.velocities[i3 + 1] *= Math.exp(-1.1 * dt);
-      this.velocities[i3 + 2] *= drag;
+      this.velocities[i3 + 2] = this.velocities[i3 + 2] * drag + windVz * dt * 2.2;
 
       this.positions[i3] += this.velocities[i3] * dt;
       this.positions[i3 + 1] += this.velocities[i3 + 1] * dt;
